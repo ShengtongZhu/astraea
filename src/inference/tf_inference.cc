@@ -75,8 +75,8 @@ float TFInference::inference_imdt(int flow_id, std::vector<float>&& state,
   auto end = std::chrono::high_resolution_clock::now();
   auto duration =
       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  std::cout << "Inference time: " << duration.count() << " microseconds"
-            << std::endl;
+// std::cout << "Inference time: " << duration.count() << " microseconds"
+          // << std::endl;
   float action = output[0].flat<float>().data()[0];
 #ifdef DEBUG
   std::cout << "Inference: "

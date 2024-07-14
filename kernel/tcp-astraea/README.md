@@ -35,3 +35,12 @@ To install the bypass module, run:
 make bypass=y
 make install bypass=y
 ```
+> Make sure to include Astraea in `tcp_allowed_congestion_control` in the kernel configuration.
+```bash
+# check current allowed congestion control
+sysctl net.ipv4.tcp_allowed_congestion_control
+# load bbr module if you want to use it
+sudo modprobe tcp_bbr
+# include astraea as allowed congestion control
+sudo sysctl -w net.ipv4.tcp_allowed_congestion_control="cubic reno bbr astraea"
+```
