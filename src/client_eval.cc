@@ -306,7 +306,7 @@ int main(int argc, char** argv) {
     /* has checked all things, we can use RL */
     use_RL = true;
   } else {
-    LOG(WARNING) << "Trained model must be specified, or " << ALG
+    LOG(INFO) << "Trained model must be specified, or " << ALG
                  << " will be pure TCP with " << cong_ctl;
   }
 
