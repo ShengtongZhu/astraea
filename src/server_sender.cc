@@ -75,11 +75,11 @@ void ipc_send_message(std::unique_ptr<IPCSocket>& ipc_sock, const MessageType& t
 void signal_handler(int sig) {
   if (sig == SIGINT or sig == SIGKILL or sig == SIGTERM) {
     send_traffic = false;
-    if (ipc != nullptr) {
-      ipc_send_message(*ipc, "{\"msg_type\": " + to_string(END) + "}");
-    }
     if (perf_log) {
       perf_log->close();
+    }
+    if (astraea_pyhelper) {
+      astraea_pyhelper->signal(SIGKILL);
     }
     std::this_thread::sleep_for(std::chrono::microseconds(100));
     exit(1);
