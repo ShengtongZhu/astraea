@@ -10,13 +10,13 @@ class NewServerManager:
     
     def start_server(self, port=8888, cc_algo="cubic", perf_log=None):
         """Start the new server sender process"""
-        cmd = ["./new_server_sender", "--port", str(port), "--cc", cc_algo]
+        cmd = ["./src/build/new_server_sender", "--port", str(port), "--cc", cc_algo]
         
         if perf_log:
             cmd.extend(["--perf-log", perf_log])
         
         print(f"Starting server with command: {' '.join(cmd)}")
-        self.process = subprocess.Popen(cmd, cwd="src")
+        self.process = subprocess.Popen(cmd)
         
         # Give server time to start
         time.sleep(1)
