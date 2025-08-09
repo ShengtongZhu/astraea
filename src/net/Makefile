@@ -1,17 +1,18 @@
 SOURCES = $(wildcard ./*.cc)
 OBJECTS = $(SOURCES:.cc=.o)
-SOURCES += $(wildcard ./*.hh)
+HEADERS = $(wildcard ./*.hh)
 
-CCFLAGS += -fPIC 
-# LDFLAGS += -lstdc++
+CCFLAGS += -fPIC
 
 TARGET = libnet.a
-# %.o: %.cc
-# 	$(CC) $(CCFLAGS) $<
 
-all:
-	$(CC) $(SOURCES) $(CCFLAGS) $(LDFLAGS) -shared -o $(TARGET) 
+%.o: %.cc $(HEADERS)
+	$(CC) $(CCFLAGS) -c $< -o $@
+
+all: $(TARGET)
+
+$(TARGET): $(OBJECTS)
+	ar rcs $(TARGET) $(OBJECTS)
 
 clean:
-	-rm -f *.o
-	-rm -f $(TARGET)
+	-rm -f *.o $(TARGET)
