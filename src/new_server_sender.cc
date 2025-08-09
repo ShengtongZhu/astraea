@@ -5,6 +5,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstring>
 
 #include "deepcc_socket.hh"
 #include "ipc_socket.hh"
@@ -13,6 +14,8 @@
 #include "system_runner.hh"
 #include "tcp_info.hh"
 #include "filesystem.hh"
+
+#define BUFFER 1024
 
 using json = nlohmann::json;
 using IPC_ptr = std::unique_ptr<IPCSocket>;
