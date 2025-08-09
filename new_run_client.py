@@ -43,7 +43,7 @@ if __name__ == "__main__":
         size_bytes = int(size_mb * 1024 * 1024)
         
         success, duration = run_client(
-            server_ip="127.0.0.1",
+            server_ip="103.49.160.232",
             port=8888,
             size_bytes=size_bytes,
             cc_algo="cubic",
