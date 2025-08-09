@@ -50,7 +50,7 @@ if __name__ == "__main__":
     
     try:
         # Start server
-        server.start_server(port=8888, cc_algo="cubic", perf_log="server_perf.log")
+        server.start_server(port=8888, cc_algo="astraea", perf_log="server_perf.log")
         
         print("Server started. Press Ctrl+C to stop.")
         
