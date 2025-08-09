@@ -118,8 +118,11 @@ int main(int argc, char* argv[]) {
         // Send size request to server
         std::string size_data(sizeof(requested_size), '\0');
         std::memcpy(&size_data[0], &requested_size, sizeof(requested_size));
+        
         auto result = client_sock.write(size_data);
-        if (std::distance(size_data.begin(), result) != sizeof(requested_size)) {
+        // Fix: Calculate sent bytes correctly
+        size_t sent_bytes = result - size_data.begin();
+        if (sent_bytes != sizeof(requested_size)) {
             std::cerr << "Failed to send size request to server" << std::endl;
             return 1;
         }

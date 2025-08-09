@@ -35,42 +35,40 @@ void ipc_send_message(IPC_ptr& ipc, const json& message) {
 }
 
 void data_thread(DeepCCSocket& sock) {
-    // First, read the size request from client
-    uint64_t requested_bytes;
-    std::string size_data = sock.read_exactly(sizeof(requested_bytes));
-    if (size_data.length() != sizeof(requested_bytes)) {
+    // Read the requested size from client
+    std::string size_request = sock.read_exactly(sizeof(uint64_t));
+    if (size_request.length() != sizeof(uint64_t)) {
         std::cerr << "Failed to read size request from client" << std::endl;
-        send_traffic = false;
         return;
     }
     
-    // Extract the requested bytes from the string
-    std::memcpy(&requested_bytes, size_data.data(), sizeof(requested_bytes));
-    target_bytes = requested_bytes;
-    size_received = true;
-    std::cout << "Received request for " << requested_bytes << " bytes" << std::endl;
+    uint64_t requested_size;
+    std::memcpy(&requested_size, size_request.data(), sizeof(uint64_t));
+    
+    std::cout << "Client requested " << requested_size << " bytes" << std::endl;
     
     // Send exactly the requested amount of data
-    const size_t chunk_size = 1024;
-    std::string data(chunk_size, 'A');
-    uint64_t bytes_sent = 0;
+    uint64_t total_sent = 0;
+    const std::string data(BUFFER, 'x');
     
-    while (send_traffic && bytes_sent < target_bytes) {
-        size_t to_send = std::min(chunk_size, static_cast<size_t>(target_bytes - bytes_sent));
-        if (to_send < chunk_size) {
-            data.resize(to_send);
-        }
-        auto result = sock.write(data);
-        size_t sent = std::distance(data.begin(), result);
+    while (total_sent < requested_size && send_traffic) {
+        uint64_t remaining = requested_size - total_sent;
+        size_t to_send = std::min(static_cast<size_t>(remaining), data.length());
+        
+        std::string chunk = data.substr(0, to_send);
+        auto result = sock.write(chunk);
+        
+        // Fix: Use result directly as it points to the end of written data
+        size_t sent = result - chunk.begin();
+        total_sent += sent;
+        
         if (sent == 0) {
-            break;
+            break; // Connection closed
         }
-        bytes_sent += sent;
-        send_cnt += sent;
     }
     
-    std::cout << "Sent " << bytes_sent << " bytes to client" << std::endl;
-    send_traffic = false;
+    std::cout << "Sent " << total_sent << " bytes total" << std::endl;
+    send_traffic = false; // Signal other threads to stop
 }
 
 void perf_log_thread() {
