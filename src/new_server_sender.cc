@@ -31,36 +31,42 @@ enum class RequestType {
 
 void ipc_send_message(IPC_ptr& ipc, const json& message) {
     std::string serialized = message.dump();
-    ipc->send_string(serialized);
+    ipc->write(serialized, true);
 }
 
 void data_thread(DeepCCSocket& sock) {
     // First, read the size request from client
     uint64_t requested_bytes;
-    ssize_t bytes_read = sock.read(reinterpret_cast<char*>(&requested_bytes), sizeof(requested_bytes));
-    if (bytes_read != sizeof(requested_bytes)) {
+    std::string size_data = sock.read_exactly(sizeof(requested_bytes));
+    if (size_data.length() != sizeof(requested_bytes)) {
         std::cerr << "Failed to read size request from client" << std::endl;
         send_traffic = false;
         return;
     }
     
+    // Extract the requested bytes from the string
+    std::memcpy(&requested_bytes, size_data.data(), sizeof(requested_bytes));
     target_bytes = requested_bytes;
     size_received = true;
     std::cout << "Received request for " << requested_bytes << " bytes" << std::endl;
     
     // Send exactly the requested amount of data
     const size_t chunk_size = 1024;
-    std::vector<char> data(chunk_size, 'A');
+    std::string data(chunk_size, 'A');
     uint64_t bytes_sent = 0;
     
     while (send_traffic && bytes_sent < target_bytes) {
         size_t to_send = std::min(chunk_size, static_cast<size_t>(target_bytes - bytes_sent));
-        ssize_t result = sock.write(data.data(), to_send);
-        if (result <= 0) {
+        if (to_send < chunk_size) {
+            data.resize(to_send);
+        }
+        auto result = sock.write(data);
+        size_t sent = std::distance(data.begin(), result);
+        if (sent == 0) {
             break;
         }
-        bytes_sent += result;
-        send_cnt += result;
+        bytes_sent += sent;
+        send_cnt += sent;
     }
     
     std::cout << "Sent " << bytes_sent << " bytes to client" << std::endl;

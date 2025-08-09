@@ -5,6 +5,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstring>
 
 #include "deepcc_socket.hh"
 #include "filesystem.hh"
@@ -17,17 +18,16 @@ std::ofstream perf_log;
 
 void data_thread(DeepCCSocket& sock) {
     const size_t chunk_size = 1024;
-    std::vector<char> buffer(chunk_size);
     uint64_t bytes_received = 0;
     
     while (recv_traffic && bytes_received < expected_bytes) {
         size_t to_receive = std::min(chunk_size, static_cast<size_t>(expected_bytes - bytes_received));
-        ssize_t result = sock.read(buffer.data(), to_receive);
-        if (result <= 0) {
+        std::string data = sock.read(to_receive);
+        if (data.empty()) {
             break;
         }
-        bytes_received += result;
-        recv_cnt += result;
+        bytes_received += data.length();
+        recv_cnt += data.length();
     }
     
     std::cout << "Received " << bytes_received << " bytes from server" << std::endl;
@@ -116,8 +116,10 @@ int main(int argc, char* argv[]) {
         client_sock.set_congestion_control(cc_algo);
         
         // Send size request to server
-        ssize_t bytes_sent = client_sock.write(reinterpret_cast<const char*>(&requested_size), sizeof(requested_size));
-        if (bytes_sent != sizeof(requested_size)) {
+        std::string size_data(sizeof(requested_size), '\0');
+        std::memcpy(&size_data[0], &requested_size, sizeof(requested_size));
+        auto result = client_sock.write(size_data);
+        if (std::distance(size_data.begin(), result) != sizeof(requested_size)) {
             std::cerr << "Failed to send size request to server" << std::endl;
             return 1;
         }
