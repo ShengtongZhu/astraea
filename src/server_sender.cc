@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "address.hh"
+#include "pid.hh"
 #include "child_process.hh"
 #include "common.hh"
 #include "deepcc_socket.hh"
