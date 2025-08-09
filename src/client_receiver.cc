@@ -58,7 +58,7 @@ void data_thread(TCPSocket& sock) {
   char buffer[BUFFER];
   while (recv_traffic.load()) {
     try {
-      size_t bytes_received = sock.read(buffer, BUFFER);
+      size_t bytes_received = sock.read(BUFFER).length();
       if (bytes_received > 0) {
         recv_cnt += bytes_received;
       } else {
