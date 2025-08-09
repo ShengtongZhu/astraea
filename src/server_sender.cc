@@ -24,7 +24,7 @@
 #include "system_runner.hh"
 #include "tcp_info.hh"  // Add this
 
-#define BUFSIZ 8192
+#define BUFSIZ 1024
 #define ALG "astraea"
 
 using namespace std;
@@ -153,33 +153,9 @@ void control_thread(DeepCCSocket& sock, std::unique_ptr<IPCSocket>& ipc,
 void data_thread(TCPSocket& sock) {
   string data(BUFSIZ, 'a');
   while (send_traffic.load()) {
-    try {
-      size_t bytes_sent = sock.write(data, true);
-      send_cnt += bytes_sent;
-    } catch (const exception& e) {
-      LOG(ERROR) << "Error sending data: " << e.what();
-      break;
-    }
+      sock.write(data, true);
   }
   LOG(INFO) << "Data thread exits";
-}
-
-void perf_log_thread(const std::chrono::milliseconds interval) {
-  auto when_started = clock_type::now();
-  auto target_time = when_started + interval;
-  size_t tmp = 0;
-  while (send_traffic.load()) {
-    // log the current throughput in Mbps
-    tmp = send_cnt;
-    unsigned long long current_thr =
-        (tmp - last_observed_send_cnt) * 8 / interval.count() * 1000 / 1000000;
-    last_observed_send_cnt = tmp;
-    if (perf_log) {
-      *perf_log << current_thr << endl;
-    }
-    std::this_thread::sleep_until(target_time);
-    target_time += interval;
-  }
 }
 
 void usage_error(const string& program_name) {
@@ -398,11 +374,7 @@ int main(int argc, char** argv) {
     LOG(INFO) << "Launch monitor thread for " << cong_ctl << " ...";
     ct = thread(do_monitor, std::ref(client));
   }
-  
-  if (perf_log and not use_RL) {
-    cerr << "Server start with perf logger" << endl;
-    log_thread = std::move(std::thread(perf_log_thread, log_interval));
-  }
+
 
   // start data sending thread
   thread dt(data_thread, std::ref(client));
