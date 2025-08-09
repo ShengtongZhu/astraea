@@ -56,6 +56,7 @@ void data_thread(TCPSocket& sock, const uint64_t expected_bytes) {
       break;
     }
   }
+  recv_traffic = false;  // signal the perf thread to stop so main can join
   LOG(INFO) << "Data thread exits after receiving " << bytes_received << " bytes";
 }
 
