@@ -88,9 +88,10 @@ void do_congestion_control(DeepCCSocket& sock, std::unique_ptr<IPCSocket>& ipc) 
   
   // Add timing measurement like in client_eval.cc
   auto ts_now = clock_type::now();
-  
+  LOG(TRACE) << "ip send finsih";
   // Wait for action
   auto header = ipc->read_exactly(2);
+  LOG(TRACE) << "ip read finsih";
   auto data_len = get_uint16(header.data());
   auto data = ipc->read_exactly(data_len);
   int cwnd = json::parse(data).at("cwnd");
