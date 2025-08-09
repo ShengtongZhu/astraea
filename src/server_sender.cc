@@ -19,6 +19,7 @@
 #include "ipc_socket.hh"
 #include "logging.hh"
 #include "socket.hh"
+#include "system_runner.hh"  // Add this line
 
 #define BUFSIZ 8192
 #define ALG "astraea"
