@@ -1,177 +1,396 @@
+#include <getopt.h>
+#include <signal.h>
+#include <stdio.h>
+
 #include <atomic>
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
-#include <cstring>
 
+#include "address.hh"
+#include "pid.hh"
+#include "child_process.hh"
+#include "common.hh"
 #include "deepcc_socket.hh"
+#include "filesystem.hh"
 #include "ipc_socket.hh"
 #include "json.hpp"
+#include "logging.hh"
 #include "serialization.hh"
+#include "socket.hh"
 #include "system_runner.hh"
 #include "tcp_info.hh"
-#include "filesystem.hh"
 
-#define BUFFER 1024
+#define BUFSIZ 1024
+#define ALG "astraea"
 
+using namespace std;
+using clock_type = std::chrono::high_resolution_clock;
 using json = nlohmann::json;
 using IPC_ptr = std::unique_ptr<IPCSocket>;
+typedef DeepCCSocket::TCPInfoRequestType RequestType;
 
-std::atomic<bool> send_traffic{true};
-std::atomic<uint64_t> send_cnt{0};
-std::atomic<uint64_t> target_bytes{0};
-std::atomic<bool> size_received{false};
+enum MessageType { INIT = 0, START = 1, END = 2, ALIVE = 3, OBSERVE = 4 };
 
-std::ofstream perf_log;
+std::atomic<bool> send_traffic(true);
+std::atomic<size_t> send_cnt = 0;
+static size_t last_observed_send_cnt = 0;
+std::unique_ptr<std::ofstream> perf_log;
+std::unique_ptr<IPCSocket> ipc;
+std::unique_ptr<ChildProcess> astraea_pyhelper;
+static int global_flow_id = 0;
 
-enum class RequestType {
-    INFERENCE_REQUEST = 0,
-    MONITOR_REQUEST = 1
-};
-
-void ipc_send_message(IPC_ptr& ipc, const json& message) {
-    std::string serialized = message.dump();
-    ipc->write(serialized, true);
+template <typename E>
+constexpr typename std::underlying_type<E>::type to_underlying(E e) noexcept {
+  return static_cast<typename std::underlying_type<E>::type>(e);
 }
 
-void data_thread(DeepCCSocket& sock) {
-    // Read the requested size from client
-    std::string size_request = sock.read_exactly(sizeof(uint64_t));
-    if (size_request.length() != sizeof(uint64_t)) {
-        std::cerr << "Failed to read size request from client" << std::endl;
-        return;
-    }
-    
-    uint64_t requested_size;
-    std::memcpy(&requested_size, size_request.data(), sizeof(uint64_t));
-    
-    std::cout << "Client requested " << requested_size << " bytes" << std::endl;
-    
-    // Send exactly the requested amount of data
-    uint64_t total_sent = 0;
-    const std::string data(BUFFER, 'x');
-    
-    while (total_sent < requested_size && send_traffic) {
-        uint64_t remaining = requested_size - total_sent;
-        size_t to_send = std::min(static_cast<size_t>(remaining), data.length());
-        
-        std::string chunk = data.substr(0, to_send);
-        auto result = sock.write(chunk);
-        
-        // Fix: Use result directly as it points to the end of written data
-        size_t sent = result - chunk.begin();
-        total_sent += sent;
-        
-        if (sent == 0) {
-            break; // Connection closed
-        }
-    }
-    
-    std::cout << "Sent " << total_sent << " bytes total" << std::endl;
-    send_traffic = false; // Signal other threads to stop
+void ipc_send_message(std::unique_ptr<IPCSocket>& ipc_sock, const MessageType& type,
+                      const json& state, const int observer_id = -1,
+                      const int step = -1) {
+  json message;
+  message["state"] = state;
+  message["flow_id"] = global_flow_id;
+  if (type == MessageType::OBSERVE) {
+    message["type"] = to_underlying(MessageType::OBSERVE);
+    message["observer"] = observer_id;
+    message["step"] = step;
+  } else {
+    // we just need to copy the type
+    message["type"] = to_underlying(type);
+  }
+
+  uint16_t len = message.dump().length();
+  if (ipc_sock) {
+    ipc_sock->write(put_field(len) + message.dump());
+  }
 }
 
-void perf_log_thread() {
-    auto start_time = std::chrono::steady_clock::now();
-    uint64_t last_send_cnt = 0;
-    
-    while (send_traffic) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        
-        auto current_time = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_time).count();
-        uint64_t current_send_cnt = send_cnt.load();
-        
-        if (perf_log.is_open()) {
-            perf_log << elapsed << "," << current_send_cnt << std::endl;
-        }
-        
-        last_send_cnt = current_send_cnt;
-    }
+void do_congestion_control(DeepCCSocket& sock, std::unique_ptr<IPCSocket>& ipc) {
+  auto state = sock.get_tcp_deepcc_info_json(RequestType::REQUEST_ACTION);
+  LOG(TRACE) << "Server " << global_flow_id << " send state: " << state.dump();
+  ipc_send_message(ipc, MessageType::ALIVE, state);
+
+  auto ts_now = clock_type::now();
+
+  auto header = ipc->read_exactly(2);
+  auto data_len = get_uint16(header.data());
+  auto data = ipc->read_exactly(data_len);
+  int cwnd = json::parse(data).at("cwnd");
+  sock.set_tcp_cwnd(cwnd);
+
+  auto elapsed = clock_type::now() - ts_now;
+  LOG(DEBUG) << "Server GET cwnd: " << cwnd << ", elapsed time is "
+             << std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count()
+             << "us";
+
+  if (perf_log) {
+    unsigned int srtt = state["srtt_us"];
+    srtt = srtt >> 3; // Convert to microseconds
+    *perf_log << state["min_rtt"] << "\t" << state["avg_urtt"] << "\t"
+              << state["cnt"] << "\t" << srtt << "\t" << state["avg_thr"]
+              << "\t" << state["thr_cnt"] << "\t" << state["pacing_rate"]
+              << "\t" << state["loss_bytes"] << "\t" << state["packets_out"]
+              << "\t" << state["retrans_out"] << "\t"
+              << state["max_packets_out"] << "\t" << state["cwnd"] << "\t"
+              << cwnd << endl;
+  }
 }
 
-void usage_error(const std::string& program_name) {
-    std::cerr << "Usage: " << program_name << " [options]" << std::endl;
-    std::cerr << "Options:" << std::endl;
-    std::cerr << "  --port PORT           Port to listen on (default: 8888)" << std::endl;
-    std::cerr << "  --cc CC_ALGO          Congestion control algorithm" << std::endl;
-    std::cerr << "  --perf-log FILE       Performance log file" << std::endl;
+void do_monitor(DeepCCSocket& sock) {
+  while (send_traffic.load()) {
+    auto state = sock.get_tcp_deepcc_info_json(RequestType::REQUEST_ACTION);
+    if (perf_log) {
+      unsigned int srtt = state["srtt_us"];
+      srtt = srtt >> 3; // Convert to microseconds
+      *perf_log << state["min_rtt"] << "\t" << state["avg_urtt"] << "\t"
+                << state["cnt"] << "\t" << srtt << "\t" << state["avg_thr"]
+                << "\t" << state["thr_cnt"] << "\t" << state["pacing_rate"]
+                << "\t" << state["loss_bytes"] << "\t" << state["packets_out"]
+                << "\t" << state["retrans_out"] << "\t"
+                << state["max_packets_out"] << "\t" << state["cwnd"] << "\t"
+                << 0 << endl;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  }
+}
+
+void control_thread(DeepCCSocket& sock, std::unique_ptr<IPCSocket>& ipc,
+                   const std::chrono::milliseconds interval) {
+  LOG(DEBUG) << "control_thread running";
+  auto when_started = clock_type::now();
+  auto target_time = when_started + interval;
+  while (send_traffic.load()) {
+    LOG(DEBUG) << "do do_congestion_control running";
+    do_congestion_control(sock, ipc);
+    std::this_thread::sleep_until(target_time);
+    target_time += interval;
+  }
+}
+
+void data_thread(TCPSocket& sock, const uint64_t requested_size) {
+  string data(BUFSIZ, 'a');
+  uint64_t sent_total = 0;
+  while (send_traffic.load() && sent_total < requested_size) {
+    size_t to_send = std::min<uint64_t>(data.size(), requested_size - sent_total);
+    if (to_send == data.size()) {
+      auto it = sock.write(data, true);
+      sent_total += (it - data.begin());
+    } else {
+      string chunk = data.substr(0, to_send);
+      auto it = sock.write(chunk, true);
+      sent_total += (it - chunk.begin());
+    }
+  }
+  LOG(INFO) << "Data thread exits after sending " << sent_total << " bytes";
+  send_traffic = false;
+}
+
+void signal_handler(int sig) {
+  if (sig == SIGINT or sig == SIGKILL or sig == SIGTERM) {
+    send_traffic = false;
+    if (perf_log) {
+      perf_log->close();
+    }
+    if (astraea_pyhelper) {
+      astraea_pyhelper->signal(SIGKILL);
+    }
+    std::this_thread::sleep_for(std::chrono::microseconds(100));
     exit(1);
+  }
 }
 
-int main(int argc, char* argv[]) {
-    std::string port = "8888";
-    std::string cc_algo = "cubic";
-    std::string perf_log_file;
-    
-    // Parse command line arguments
-    for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
-        if (arg == "--port" && i + 1 < argc) {
-            port = argv[++i];
-        } else if (arg == "--cc" && i + 1 < argc) {
-            cc_algo = argv[++i];
-        } else if (arg == "--perf-log" && i + 1 < argc) {
-            perf_log_file = argv[++i];
-        } else {
-            usage_error(argv[0]);
-        }
+void usage_error(const string& program_name) {
+  cerr << "Usage: " << program_name << " [OPTION]... [COMMAND]" << endl;
+  cerr << endl;
+  cerr << "Options = --port=PORT --cong=ALGORITHM --interval=INTERVAL (Milliseconds) "
+          "--pyhelper=PYTHON_PATH --model=MODEL_PATH --id=None --perf-log=PATH "
+          "--perf-interval=MS"
+       << endl;
+  cerr << endl;
+  cerr << "Default congestion control algorithm is CUBIC; " << endl
+       << "Default control interval is 20ms; " << endl
+       << "Default flow id is None; " << endl
+       << "pyhelper specifies the path of Python-inference script; " << endl
+       << "model-path specifies the pre-trained model, and will be passed to "
+          "python inference module; " << endl
+       << "If perf_log is specified, the default log interval is 500ms" << endl;
+
+  throw runtime_error("invalid arguments");
+}
+
+int main(int argc, char** argv) {
+  /* register signal handler */
+  signal(SIGTERM, signal_handler);
+  signal(SIGKILL, signal_handler);
+  signal(SIGINT, signal_handler);
+  /* ignore SIGPIPE generated by Socket write */
+  if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+    throw runtime_error("signal: failed to ignore SIGPIPE");
+  }
+
+  if (argc < 1) {
+    usage_error(argv[0]);
+  }
+  const option command_line_options[] = {
+      {"port", required_argument, nullptr, 'p'},
+      {"pyhelper", required_argument, nullptr, 'h'},
+      {"model", required_argument, nullptr, 'm'},
+      {"cong", optional_argument, nullptr, 'c'},
+      {"interval", optional_argument, nullptr, 't'},
+      {"id", optional_argument, nullptr, 'f'},
+      {"perf-log", optional_argument, nullptr, 'l'},
+      {"perf-interval", optional_argument, nullptr, 'i'},
+      {0, 0, nullptr, 0}};
+
+  /* use RL inference or not */
+  bool use_RL = false;
+  string service, pyhelper, model, cong_ctl, interval, id, perf_log_path, perf_interval;
+  while (true) {
+    const int opt = getopt_long(argc, argv, "", command_line_options, nullptr);
+    if (opt == -1) { /* end of options */
+      break;
     }
-    
-    // Open performance log if specified
-    if (!perf_log_file.empty()) {
-        perf_log.open(perf_log_file);
-        if (!perf_log.is_open()) {
-            std::cerr << "Failed to open performance log file: " << perf_log_file << std::endl;
-            return 1;
-        }
+    switch (opt) {
+    case 'c':
+      cong_ctl = optarg;
+      break;
+    case 'f':
+      id = optarg;
+      break;
+    case 'h':
+      pyhelper = optarg;
+      break;
+    case 'i':
+      perf_interval = optarg;
+      break;
+    case 'l':
+      perf_log_path = optarg;
+      break;
+    case 'm':
+      model = optarg;
+      break;
+    case 'p':
+      service = optarg;
+      break;
+    case 't':
+      interval = optarg;
+      break;
+    case '?':
+      usage_error(argv[0]);
+      break;
+    default:
+      throw runtime_error("getopt_long: unexpected return value " +
+                          to_string(opt));
     }
-    
-    try {
-        // Create and bind socket
-        DeepCCSocket server_sock;
-        server_sock.bind({"0.0.0.0", port});
-        server_sock.listen();
-        
-        std::cout << "Server listening on port " << port << std::endl;
-        
-        // Accept client connection
-        auto client_sock = server_sock.accept();
-        std::cout << "Client connected" << std::endl;
-        
-        // Set congestion control
-        client_sock.set_congestion_control(cc_algo);
-        
-        // Start performance logging thread
-        std::thread perf_thread;
-        if (perf_log.is_open()) {
-            perf_thread = std::thread(perf_log_thread);
-        }
-        
-        // Start data thread
-        std::thread data_th(data_thread, std::ref(client_sock));
-        
-        // Wait for data thread to complete
-        data_th.join();
-        
-        // Clean up
-        if (perf_thread.joinable()) {
-            perf_thread.join();
-        }
-        
-        if (perf_log.is_open()) {
-            perf_log.close();
-        }
-        
-        std::cout << "Server finished" << std::endl;
-        
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
+  }
+
+  if (optind > argc) {
+    usage_error(argv[0]);
+  }
+
+  /* assign flow_id */
+  if (not id.empty()) {
+    global_flow_id = stoi(id);
+    LOG(INFO) << "Flow id: " << global_flow_id;
+  }
+
+  std::chrono::milliseconds control_interval(20ms);
+  if (cong_ctl == "astraea" and not(pyhelper.empty() or model.empty())) {
+    if (not fs::exists(pyhelper)) {
+      throw runtime_error("Pyhelper does not exist");
     }
-    
-    return 0;
+    if (not fs::exists(model)) {
+      throw runtime_error("Trained model does not exist");
+    }
+    string ipc_dir = "astraea_ipc";
+    fs::create_directory(ipc_dir);
+    string ipc_file = fs::path(ipc_dir) / ("astraea" + to_string(pid()));
+    IPCSocket ipcsock;
+    ipcsock.set_reuseaddr();
+    ipcsock.bind(ipc_file);
+    ipcsock.listen();
+
+    fs::path ipc_path = fs::current_path() / ipc_file;
+
+    LOG(INFO) << "Server: IPC listen at " << ipc_path;
+
+    vector<string> prog_args{pyhelper, "--ipc-path", ipc_path, "--model-path",
+                             model};
+    astraea_pyhelper = std::make_unique<ChildProcess>(
+        pyhelper,
+        [&pyhelper, &prog_args]() { return ezexec(pyhelper, prog_args); });
+
+    if (not interval.empty()) {
+      control_interval = std::move(std::chrono::milliseconds(stoi(interval)));
+    }
+    LOG(INFO) << "Server: started subprocess of Python helper";
+    ipc = make_unique<IPCSocket>(ipcsock.accept());
+    LOG(INFO) << "Server " << global_flow_id
+              << " IPC with env has been established, control interval is "
+              << control_interval.count() << "ms";
+    use_RL = true;
+  } else {
+    LOG(INFO) << "Trained model must be specified, or " << ALG
+                 << " will be pure TCP with " << cong_ctl;
+  }
+
+  if (cong_ctl.empty()) {
+    cong_ctl = "cubic";
+  }
+
+  std::chrono::milliseconds log_interval(500ms);
+  if (not perf_log_path.empty()) {
+    perf_log.reset(new std::ofstream(perf_log_path));
+    if (not perf_log->good()) {
+      throw runtime_error(perf_log_path + ": error opening for writing");
+    }
+    if (not perf_interval.empty()) {
+      log_interval = std::chrono::milliseconds(stoi(perf_interval));
+    }
+  }
+
+  int port = stoi(service);
+  Address address("0.0.0.0", port);
+  DeepCCSocket server;
+  server.set_reuseaddr();
+  server.bind(address);
+  server.listen();
+  LOG(INFO) << "Server listen at " << port;
+
+  DeepCCSocket client = server.accept();
+  struct timeval timeout = {10, 0};
+  setsockopt(client.fd_num(), SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
+  setsockopt(client.fd_num(), SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
+  client.set_congestion_control(cong_ctl);
+  client.set_nodelay();
+  LOG(DEBUG) << "Server " << global_flow_id << " set congestion control to "
+             << cong_ctl;
+
+  if (cong_ctl == "astraea") {
+    int enable_deepcc = 2;
+    client.enable_deepcc(enable_deepcc);
+    LOG(DEBUG) << "Server " << global_flow_id << " "
+               << "enables deepCC plugin: " << enable_deepcc;
+  }
+
+  // Read requested size from client (uint64_t)
+  uint64_t requested_size = 0;
+  {
+    auto size_buf = client.read_exactly(sizeof(uint64_t));
+    if (size_buf.size() != sizeof(uint64_t)) {
+      throw runtime_error("failed to read requested size from client");
+    }
+    std::memcpy(&requested_size, size_buf.data(), sizeof(uint64_t));
+    LOG(INFO) << "Client requested " << requested_size << " bytes";
+  }
+
+  if (use_RL and perf_log) {
+    *perf_log << "min_rtt\t"
+              << "avg_urtt\t"
+              << "cnt\t"
+              << "srtt_us\t"
+              << "avg_thr\t"
+              << "thr_cnt\t"
+              << "pacing_rate\t"
+              << "loss_bytes\t"
+              << "packets_out\t"
+              << "retrans_out\t"
+              << "max_packets_out\t"
+              << "CWND in Kernel\t"
+              << "CWND to Assign" << endl;
+  } else if (perf_log) {
+    *perf_log << "# Interval = " << log_interval.count() << "ms" << endl;
+  }
+
+  // start threads
+  thread ct;
+  thread log_thread;
+
+  if (use_RL and ipc != nullptr) {
+    ct = std::move(thread(control_thread, std::ref(client), std::ref(ipc),
+                          control_interval));
+    LOG(DEBUG) << "Server " << global_flow_id << " Started control thread ... ";
+  } else if (cong_ctl != "astraea" and perf_log != nullptr) {
+    LOG(INFO) << "Launch monitor thread for " << cong_ctl << " ...";
+    ct = thread(do_monitor, std::ref(client));
+  }
+
+  // start data sending thread with requested size
+  thread dt(data_thread, std::ref(client), requested_size);
+  LOG(INFO) << "Server " << global_flow_id << " is sending data to client...";
+
+  /* wait for finish */
+  dt.join();
+  if (ct.joinable()) {
+    ct.join();
+  }
+  if (log_thread.joinable()) {
+    log_thread.join();
+  }
 }

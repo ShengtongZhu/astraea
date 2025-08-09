@@ -1,161 +1,217 @@
+#include <getopt.h>
+#include <signal.h>
+#include <stdio.h>
+
 #include <atomic>
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <thread>
-#include <vector>
 #include <cstring>
 
-#include "deepcc_socket.hh"
-#include "filesystem.hh"
+#include "address.hh"
+#include "common.hh"
+#include "logging.hh"
+#include "socket.hh"
 
-std::atomic<bool> recv_traffic{true};
-std::atomic<uint64_t> recv_cnt{0};
-std::atomic<uint64_t> expected_bytes{0};
+#define BUFFER 1024
 
-std::ofstream perf_log;
+using namespace std;
+using clock_type = std::chrono::high_resolution_clock;
 
-void data_thread(DeepCCSocket& sock) {
-    const size_t chunk_size = 1024;
-    uint64_t bytes_received = 0;
-    
-    while (recv_traffic && bytes_received < expected_bytes) {
-        size_t to_receive = std::min(chunk_size, static_cast<size_t>(expected_bytes - bytes_received));
-        std::string data = sock.read(to_receive);
-        if (data.empty()) {
-            break;
-        }
-        bytes_received += data.length();
-        recv_cnt += data.length();
-    }
-    
-    std::cout << "Received " << bytes_received << " bytes from server" << std::endl;
+std::atomic<bool> recv_traffic(true);
+std::atomic<size_t> recv_cnt = 0;
+static size_t last_observed_recv_cnt = 0;
+std::unique_ptr<std::ofstream> perf_log;
+
+void signal_handler(int sig) {
+  if (sig == SIGINT or sig == SIGKILL or sig == SIGTERM) {
     recv_traffic = false;
-}
-
-void perf_log_thread() {
-    auto start_time = std::chrono::steady_clock::now();
-    uint64_t last_recv_cnt = 0;
-    
-    while (recv_traffic) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        
-        auto current_time = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_time).count();
-        uint64_t current_recv_cnt = recv_cnt.load();
-        
-        if (perf_log.is_open()) {
-            perf_log << elapsed << "," << current_recv_cnt << std::endl;
-        }
-        
-        last_recv_cnt = current_recv_cnt;
+    if (perf_log) {
+      perf_log->close();
     }
-}
-
-void usage_error(const std::string& program_name) {
-    std::cerr << "Usage: " << program_name << " [options]" << std::endl;
-    std::cerr << "Options:" << std::endl;
-    std::cerr << "  --ip IP               Server IP address (default: 127.0.0.1)" << std::endl;
-    std::cerr << "  --port PORT           Server port (default: 8888)" << std::endl;
-    std::cerr << "  --size BYTES          Number of bytes to request" << std::endl;
-    std::cerr << "  --cc CC_ALGO          Congestion control algorithm" << std::endl;
-    std::cerr << "  --perf-log FILE       Performance log file" << std::endl;
+    std::this_thread::sleep_for(std::chrono::microseconds(100));
     exit(1);
+  }
 }
 
-int main(int argc, char* argv[]) {
-    std::string server_ip = "127.0.0.1";
-    std::string port = "8888";
-    std::string cc_algo = "cubic";
-    std::string perf_log_file;
-    uint64_t requested_size = 0;
-    
-    // Parse command line arguments
-    for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
-        if (arg == "--ip" && i + 1 < argc) {
-            server_ip = argv[++i];
-        } else if (arg == "--port" && i + 1 < argc) {
-            port = argv[++i];
-        } else if (arg == "--size" && i + 1 < argc) {
-            requested_size = std::stoull(argv[++i]);
-        } else if (arg == "--cc" && i + 1 < argc) {
-            cc_algo = argv[++i];
-        } else if (arg == "--perf-log" && i + 1 < argc) {
-            perf_log_file = argv[++i];
-        } else {
-            usage_error(argv[0]);
-        }
-    }
-    
-    if (requested_size == 0) {
-        std::cerr << "Error: --size parameter is required" << std::endl;
-        usage_error(argv[0]);
-    }
-    
-    expected_bytes = requested_size;
-    
-    // Open performance log if specified
-    if (!perf_log_file.empty()) {
-        perf_log.open(perf_log_file);
-        if (!perf_log.is_open()) {
-            std::cerr << "Failed to open performance log file: " << perf_log_file << std::endl;
-            return 1;
-        }
-    }
-    
+void data_thread(TCPSocket& sock, const uint64_t expected_bytes) {
+  size_t bytes_received = 0;
+  while (recv_traffic.load() and bytes_received < expected_bytes) {
     try {
-        // Connect to server
-        DeepCCSocket client_sock;
-        client_sock.connect({server_ip, port});
-        
-        std::cout << "Connected to server " << server_ip << ":" << port << std::endl;
-        
-        // Set congestion control
-        client_sock.set_congestion_control(cc_algo);
-        
-        // Send size request to server
-        std::string size_data(sizeof(requested_size), '\0');
-        std::memcpy(&size_data[0], &requested_size, sizeof(requested_size));
-        
-        auto result = client_sock.write(size_data);
-        // Fix: Calculate sent bytes correctly
-        size_t sent_bytes = result - size_data.begin();
-        if (sent_bytes != sizeof(requested_size)) {
-            std::cerr << "Failed to send size request to server" << std::endl;
-            return 1;
-        }
-        
-        std::cout << "Requested " << requested_size << " bytes from server" << std::endl;
-        
-        // Start performance logging thread
-        std::thread perf_thread;
-        if (perf_log.is_open()) {
-            perf_thread = std::thread(perf_log_thread);
-        }
-        
-        // Start data thread
-        std::thread data_th(data_thread, std::ref(client_sock));
-        
-        // Wait for data thread to complete
-        data_th.join();
-        
-        // Clean up
-        if (perf_thread.joinable()) {
-            perf_thread.join();
-        }
-        
-        if (perf_log.is_open()) {
-            perf_log.close();
-        }
-        
-        std::cout << "Client finished" << std::endl;
-        
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
+      size_t to_read = std::min<size_t>(BUFFER, expected_bytes - bytes_received);
+      size_t got = sock.read(to_read).length();
+      if (got > 0) {
+        recv_cnt += got;
+        bytes_received += got;
+      } else {
+        // Connection closed by server
+        LOG(INFO) << "Server closed connection";
+        break;
+      }
+    } catch (const exception& e) {
+      LOG(ERROR) << "Error receiving data: " << e.what();
+      break;
     }
-    
-    return 0;
+  }
+  LOG(INFO) << "Data thread exits after receiving " << bytes_received << " bytes";
+}
+
+void perf_log_thread(const std::chrono::milliseconds interval) {
+  auto when_started = clock_type::now();
+  auto target_time = when_started + interval;
+  size_t tmp = 0;
+  while (recv_traffic.load()) {
+    // log the current throughput in Mbps
+    tmp = recv_cnt;
+    unsigned long long current_thr =
+        (tmp - last_observed_recv_cnt) * 8 / interval.count() * 1000 / 1000000;
+    last_observed_recv_cnt = tmp;
+    if (perf_log) {
+      *perf_log << current_thr << endl;
+    }
+    std::this_thread::sleep_until(target_time);
+    target_time += interval;
+  }
+}
+
+void usage_error(const string& program_name) {
+  cerr << "Usage: " << program_name << " [OPTION]... [COMMAND]" << endl;
+  cerr << endl;
+  cerr << "Options = --ip=IP_ADDR --port=PORT --cong=ALGORITHM (default: "
+          "CUBIC) --size=BYTES --perf-log=PATH(default is None) --perf-interval=MS"
+       << endl
+       << "If perf_log is specified, the default log interval is 500ms" << endl;
+  cerr << endl;
+
+  throw runtime_error("invalid arguments");
+}
+
+int main(int argc, char** argv) {
+  /* register signal handler */
+  signal(SIGTERM, signal_handler);
+  signal(SIGKILL, signal_handler);
+  signal(SIGINT, signal_handler);
+  /* ignore SIGPIPE generated by Socket write */
+  if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+    throw runtime_error("signal: failed to ignore SIGPIPE");
+  }
+
+  if (argc < 1) {
+    usage_error(argv[0]);
+  }
+  const option command_line_options[] = {
+      {"ip", required_argument, nullptr, 'a'},
+      {"port", required_argument, nullptr, 'p'},
+      {"cong", optional_argument, nullptr, 'c'},
+      {"size", required_argument, nullptr, 's'},
+      {"perf-log", optional_argument, nullptr, 'l'},
+      {"perf-interval", optional_argument, nullptr, 'i'},
+      {0, 0, nullptr, 0}};
+
+  string ip, service, cong_ctl, perf_log_path, interval;
+  uint64_t requested_size = 0;
+  while (true) {
+    const int opt = getopt_long(argc, argv, "", command_line_options, nullptr);
+    if (opt == -1) { /* end of options */
+      break;
+    }
+    switch (opt) {
+    case 'a':
+      ip = optarg;
+      break;
+    case 'c':
+      cong_ctl = optarg;
+      break;
+    case 'i':
+      interval = optarg;
+      break;
+    case 'l':
+      perf_log_path = optarg;
+      break;
+    case 'p':
+      service = optarg;
+      break;
+    case 's':
+      requested_size = std::stoull(optarg);
+      break;
+    case '?':
+      usage_error(argv[0]);
+      break;
+    default:
+      throw runtime_error("getopt_long: unexpected return value " +
+                          to_string(opt));
+    }
+  }
+
+  if (optind > argc) {
+    usage_error(argv[0]);
+  }
+
+  if (requested_size == 0) {
+    cerr << "Error: --size must be provided and > 0" << endl;
+    usage_error(argv[0]);
+  }
+
+  /* default CC is cubic */
+  if (cong_ctl.empty()) {
+    cong_ctl = "cubic";
+  }
+
+  // init perf log file
+  std::chrono::milliseconds log_interval(500ms);
+  if (not perf_log_path.empty()) {
+    perf_log.reset(new std::ofstream(perf_log_path));
+    if (not perf_log->good()) {
+      throw runtime_error(perf_log_path + ": error opening for writing");
+    }
+    if (not interval.empty()) {
+      log_interval = std::chrono::milliseconds(stoi(interval));
+    }
+  }
+
+  int port = stoi(service);
+  // init server addr
+  Address address(ip, port);
+  TCPSocket client;
+  /* set reuse_addr */
+  client.set_reuseaddr();
+  client.connect(address);
+  
+  struct timeval timeout = {10, 0};
+  setsockopt(client.fd_num(), SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
+  setsockopt(client.fd_num(), SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
+  client.set_congestion_control(cong_ctl);
+  client.set_nodelay();
+  LOG(DEBUG) << "Client congestion control algorithm: " << cong_ctl;
+
+  // Send the requested size to server (uint64_t)
+  std::string size_buf(sizeof(uint64_t), '\0');
+  std::memcpy(&size_buf[0], &requested_size, sizeof(uint64_t));
+  auto it = client.write(size_buf, true);
+  size_t sent = it - size_buf.begin();
+  if (sent != sizeof(uint64_t)) {
+    throw runtime_error("failed to send size request to server");
+  }
+  LOG(INFO) << "Requested " << requested_size << " bytes from server";
+
+  // start logging thread
+  thread log_thread;
+  if (perf_log) {
+    cerr << "Client start with perf logger" << endl;
+    log_thread = std::move(std::thread(perf_log_thread, log_interval));
+    *perf_log << "# Interval = " << log_interval.count() << "ms" << endl;
+  }
+
+  // start data receiving thread
+  thread dt(data_thread, std::ref(client), requested_size);
+  LOG(INFO) << "Client is receiving data from server...";
+
+  /* wait for finish */
+  dt.join();
+  if (log_thread.joinable()) {
+    log_thread.join();
+  }
 }
