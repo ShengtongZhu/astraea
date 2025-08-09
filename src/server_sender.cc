@@ -16,6 +16,7 @@
 #include "child_process.hh"
 #include "common.hh"
 #include "deepcc_socket.hh"
+#include "filesystem.hh"  // Add this line
 #include "ipc_socket.hh"
 #include "json.hpp"  // Add this
 #include "logging.hh"
