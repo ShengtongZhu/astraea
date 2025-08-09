@@ -83,21 +83,19 @@ void do_congestion_control(DeepCCSocket& sock, std::unique_ptr<IPCSocket>& ipc) 
   auto state = sock.get_tcp_deepcc_info_json(RequestType::REQUEST_ACTION);
   LOG(TRACE) << "Server " << global_flow_id << " send state: " << state.dump();
   
-  // Use the proper ipc_send_message function instead of manual construction
-  ipc_send_message(ipc, MessageType::ALIVE, state);
+  // Use proper ipc_send_message instead of manual construction
+  ipc_send_message(ipc, ALIVE, state);
   
-  // Add timing measurement like in client_eval.cc
+  // Add timing measurement
   auto ts_now = clock_type::now();
-  LOG(TRACE) << "ip send finsih";
-  // Wait for action
+  
+  // Wait for action (this won't block indefinitely anymore)
   auto header = ipc->read_exactly(2);
-  LOG(TRACE) << "ip read finsih";
   auto data_len = get_uint16(header.data());
   auto data = ipc->read_exactly(data_len);
   int cwnd = json::parse(data).at("cwnd");
   sock.set_tcp_cwnd(cwnd);
   
-  // Calculate elapsed time
   auto elapsed = clock_type::now() - ts_now;
   LOG(DEBUG) << "Server GET cwnd: " << cwnd << ", elapsed time is "
              << std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count()
