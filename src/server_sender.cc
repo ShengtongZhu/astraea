@@ -146,6 +146,7 @@ void control_thread(DeepCCSocket& sock, std::unique_ptr<IPCSocket>& ipc,
   auto when_started = clock_type::now();
   auto target_time = when_started + interval;
   while (send_traffic.load()) {
+    LOG(DEBUG) << "do do_congestion_control running";
     do_congestion_control(sock, ipc);
     std::this_thread::sleep_until(target_time);
     target_time += interval;
