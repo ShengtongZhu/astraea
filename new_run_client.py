@@ -6,7 +6,7 @@ import time
 def run_client(server_ip="127.0.0.1", port=8888, size_bytes=1024*1024, cc_algo="cubic", perf_log=None):
     """Run the new client receiver with specified parameters"""
     cmd = [
-        "./src/build/new_client_receiver",
+        "./src/build/bin/new_client_receiver",
         "--ip", server_ip,
         "--port", str(port),
         "--size", str(size_bytes),
