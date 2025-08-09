@@ -45,20 +45,27 @@ std::unique_ptr<IPCSocket> ipc;
 std::unique_ptr<ChildProcess> astraea_pyhelper;
 static int global_flow_id = 0;
 
-void ipc_send_message(IPCSocket& ipc, const string& message) {
-  try {
-    ipc.write(message, true);
-  } catch (const exception& e) {
-    LOG(ERROR) << "IPC send error: " << e.what();
-  }
+// Add the to_underlying template function after the includes and before the enum
+template <typename E>
+constexpr typename std::underlying_type<E>::type to_underlying(E e) noexcept {
+  return static_cast<typename std::underlying_type<E>::type>(e);
 }
 
-void ipc_send_message(std::unique_ptr<IPCSocket>& ipc_sock, int msg_type, const json& state) {
+void ipc_send_message(std::unique_ptr<IPCSocket>& ipc_sock, const MessageType& type,
+                      const json& state, const int observer_id = -1,
+                      const int step = -1) {
   json message;
   message["state"] = state;
   message["flow_id"] = global_flow_id;
-  message["type"] = msg_type;
-  
+  if (type == MessageType::OBSERVE) {
+    message["type"] = to_underlying(MessageType::OBSERVE);
+    message["observer"] = observer_id;
+    message["step"] = step;
+  } else {
+    // we just need to copy the type
+    message["type"] = to_underlying(type);
+  }
+
   uint16_t len = message.dump().length();
   if (ipc_sock) {
     ipc_sock->write(put_field(len) + message.dump());
@@ -79,12 +86,13 @@ void signal_handler(int sig) {
   }
 }
 
+// Update the do_congestion_control function call (line 84) to use MessageType enum:
 void do_congestion_control(DeepCCSocket& sock, std::unique_ptr<IPCSocket>& ipc) {
   auto state = sock.get_tcp_deepcc_info_json(RequestType::REQUEST_ACTION);
   LOG(TRACE) << "Server " << global_flow_id << " send state: " << state.dump();
   
-  // Use proper ipc_send_message instead of manual construction
-  ipc_send_message(ipc, ALIVE, state);
+  // Use proper ipc_send_message with MessageType enum
+  ipc_send_message(ipc, MessageType::ALIVE, state);
   
   // Add timing measurement
   auto ts_now = clock_type::now();
@@ -135,10 +143,6 @@ void do_monitor(DeepCCSocket& sock) {
 
 void control_thread(DeepCCSocket& sock, std::unique_ptr<IPCSocket>& ipc,
                    const std::chrono::milliseconds interval) {
-  // send INIT message
-  ipc_send_message(*ipc, "{\"msg_type\": " + to_string(INIT) + "}");
-  // send START message
-  ipc_send_message(*ipc, "{\"msg_type\": " + to_string(START) + "}");
   LOG(DEBUG) << "control_thread running";
   // start regular congestion control pattern
   auto when_started = clock_type::now();
