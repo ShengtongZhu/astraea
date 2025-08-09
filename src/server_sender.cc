@@ -141,7 +141,7 @@ void control_thread(DeepCCSocket& sock, std::unique_ptr<IPCSocket>& ipc,
   ipc_send_message(*ipc, "{\"msg_type\": " + to_string(INIT) + "}");
   // send START message
   ipc_send_message(*ipc, "{\"msg_type\": " + to_string(START) + "}");
-
+  LOG(DEBUG) << "control_thread running";
   // start regular congestion control pattern
   auto when_started = clock_type::now();
   auto target_time = when_started + interval;
