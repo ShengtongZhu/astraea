@@ -83,16 +83,11 @@ void do_congestion_control(DeepCCSocket& sock, std::unique_ptr<IPCSocket>& ipc) 
   auto state = sock.get_tcp_deepcc_info_json(RequestType::REQUEST_ACTION);
   LOG(TRACE) << "Server " << global_flow_id << " send state: " << state.dump();
   
-  // Send state to Python helper
-  json message;
-  message["state"] = state;
-  message["flow_id"] = global_flow_id;
-  message["type"] = 3; // ALIVE message type
+  // Use the proper ipc_send_message function instead of manual construction
+  ipc_send_message(ipc, MessageType::ALIVE, state);
   
-  uint16_t len = message.dump().length();
-  if (ipc) {
-    ipc->write(put_field(len) + message.dump());
-  }
+  // Add timing measurement like in client_eval.cc
+  auto ts_now = clock_type::now();
   
   // Wait for action
   auto header = ipc->read_exactly(2);
@@ -101,7 +96,11 @@ void do_congestion_control(DeepCCSocket& sock, std::unique_ptr<IPCSocket>& ipc) 
   int cwnd = json::parse(data).at("cwnd");
   sock.set_tcp_cwnd(cwnd);
   
-  LOG(DEBUG) << "Server GET cwnd: " << cwnd;
+  // Calculate elapsed time
+  auto elapsed = clock_type::now() - ts_now;
+  LOG(DEBUG) << "Server GET cwnd: " << cwnd << ", elapsed time is "
+             << std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count()
+             << "us";
   
   // Log performance data
   if (perf_log) {
