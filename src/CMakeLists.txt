@@ -39,6 +39,11 @@ add_executable(client client.cc)
 add_executable(server server.cc)
 # client for evaluation
 add_executable(client_eval client_eval.cc)
+# NEW: client receiver and server sender
+add_executable(client_receiver client_receiver.cc)
+add_executable(server_sender server_sender.cc)
+# passive client
+add_executable(passive_client passive_client.cc)
 # client for batch inference evaluation
 if(COMPILE_INFERENCE_SERVICE)
     add_executable(client_eval_batch client_eval_batch.cc)
@@ -49,6 +54,10 @@ endif()
 target_link_libraries(server PRIVATE net pthread)
 target_link_libraries(client PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
 target_link_libraries(client_eval PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
+# NEW: link libraries for new executables
+target_link_libraries(client_receiver PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
+target_link_libraries(server_sender PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
+target_link_libraries(passive_client PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
 if(COMPILE_INFERENCE_SERVICE)
     target_link_libraries(client_eval_batch PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
     target_link_libraries(client_eval_batch_udp PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
