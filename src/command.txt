@@ -1,0 +1,3 @@
+./server_sender --port=12345 --cong=astraea --pyhelper=python/infer.py --model=models/exported/model --perf-log=server_perf.log
+
+./client_receiver --ip=SERVER_PUBLIC_IP --port=12345 --cong=cubic --perf-log=client_perf.log
