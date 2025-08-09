@@ -17,15 +17,21 @@
 #include "common.hh"
 #include "deepcc_socket.hh"
 #include "ipc_socket.hh"
+#include "json.hpp"  // Add this
 #include "logging.hh"
+#include "serialization.hh"  // Add this
 #include "socket.hh"
-#include "system_runner.hh"  // Add this line
+#include "system_runner.hh"
+#include "tcp_info.hh"  // Add this
 
 #define BUFSIZ 8192
 #define ALG "astraea"
 
 using namespace std;
 using clock_type = std::chrono::high_resolution_clock;
+using json = nlohmann::json;  // Add this
+using IPC_ptr = std::unique_ptr<IPCSocket>;  // Add this
+typedef DeepCCSocket::TCPInfoRequestType RequestType;  // Add this
 
 enum MessageType { INIT = 0, START = 1, END = 2, ALIVE = 3, OBSERVE = 4 };
 
@@ -45,6 +51,18 @@ void ipc_send_message(IPCSocket& ipc, const string& message) {
   }
 }
 
+void ipc_send_message(std::unique_ptr<IPCSocket>& ipc_sock, int msg_type, const json& state) {
+  json message;
+  message["state"] = state;
+  message["flow_id"] = global_flow_id;
+  message["type"] = msg_type;
+  
+  uint16_t len = message.dump().length();
+  if (ipc_sock) {
+    ipc_sock->write(put_field(len) + message.dump());
+  }
+}
+
 void signal_handler(int sig) {
   if (sig == SIGINT or sig == SIGKILL or sig == SIGTERM) {
     send_traffic = false;
@@ -60,77 +78,58 @@ void signal_handler(int sig) {
 }
 
 void do_congestion_control(DeepCCSocket& sock, std::unique_ptr<IPCSocket>& ipc) {
-  // get TCP info
-  TCPInfo tcpinfo = sock.get_tcp_info();
-  string msg = "{\"msg_type\": " + to_string(OBSERVE) +
-               ", \"cwnd\": " + to_string(tcpinfo.tcpi_snd_cwnd) +
-               ", \"min_rtt\": " + to_string(tcpinfo.tcpi_min_rtt) +
-               ", \"srtt\": " + to_string(tcpinfo.tcpi_rtt) +
-               ", \"throughput\": " + to_string(sock.get_throughput()) +
-               ", \"packets_out\": " + to_string(tcpinfo.tcpi_packets_out) +
-               ", \"retrans_out\": " + to_string(tcpinfo.tcpi_retrans_out) +
-               ", \"lost_out\": " + to_string(tcpinfo.tcpi_lost) +
-               ", \"flow_id\": " + to_string(global_flow_id) + "}";
-
-  ipc_send_message(*ipc, msg);
-
-  // receive action from Python helper
-  try {
-    string response = ipc->read();
-    if (not response.empty()) {
-      // parse JSON response and apply congestion window
-      size_t cwnd_pos = response.find("\"cwnd\":");
-      if (cwnd_pos != string::npos) {
-        size_t value_start = response.find(":", cwnd_pos) + 1;
-        size_t value_end = response.find_first_of(",}", value_start);
-        if (value_start != string::npos && value_end != string::npos) {
-          string cwnd_str = response.substr(value_start, value_end - value_start);
-          int new_cwnd = stoi(cwnd_str);
-          sock.set_cwnd(new_cwnd);
-        }
-      }
-    }
-  } catch (const exception& e) {
-    LOG(ERROR) << "Error receiving from IPC: " << e.what();
+  auto state = sock.get_tcp_deepcc_info_json(RequestType::REQUEST_ACTION);
+  LOG(TRACE) << "Server " << global_flow_id << " send state: " << state.dump();
+  
+  // Send state to Python helper
+  json message;
+  message["state"] = state;
+  message["flow_id"] = global_flow_id;
+  message["type"] = 3; // ALIVE message type
+  
+  uint16_t len = message.dump().length();
+  if (ipc) {
+    ipc->write(put_field(len) + message.dump());
   }
-
-  // log performance data
+  
+  // Wait for action
+  auto header = ipc->read_exactly(2);
+  auto data_len = get_uint16(header.data());
+  auto data = ipc->read_exactly(data_len);
+  int cwnd = json::parse(data).at("cwnd");
+  sock.set_tcp_cwnd(cwnd);
+  
+  LOG(DEBUG) << "Server GET cwnd: " << cwnd;
+  
+  // Log performance data
   if (perf_log) {
-    *perf_log << tcpinfo.tcpi_min_rtt << "\t"
-              << tcpinfo.tcpi_rtt << "\t"
-              << send_cnt << "\t"
-              << tcpinfo.tcpi_rtt << "\t"
-              << sock.get_throughput() << "\t"
-              << send_cnt << "\t"
-              << sock.get_pacing_rate() << "\t"
-              << tcpinfo.tcpi_bytes_retrans << "\t"
-              << tcpinfo.tcpi_packets_out << "\t"
-              << tcpinfo.tcpi_retrans_out << "\t"
-              << tcpinfo.tcpi_snd_cwnd << "\t"
-              << tcpinfo.tcpi_snd_cwnd << "\t"
-              << tcpinfo.tcpi_snd_cwnd << endl;
+    unsigned int srtt = state["srtt_us"];
+    srtt = srtt >> 3; // Convert to microseconds
+    *perf_log << state["min_rtt"] << "\t" << state["avg_urtt"] << "\t"
+              << state["cnt"] << "\t" << srtt << "\t" << state["avg_thr"]
+              << "\t" << state["thr_cnt"] << "\t" << state["pacing_rate"]
+              << "\t" << state["loss_bytes"] << "\t" << state["packets_out"]
+              << "\t" << state["retrans_out"] << "\t"
+              << state["max_packets_out"] << "\t" << state["cwnd"] << "\t"
+              << cwnd << endl;
   }
 }
 
 void do_monitor(DeepCCSocket& sock) {
   while (send_traffic.load()) {
-    TCPInfo tcpinfo = sock.get_tcp_info();
+    auto state = sock.get_tcp_deepcc_info_json(RequestType::REQUEST_ACTION);
     if (perf_log) {
-      *perf_log << tcpinfo.tcpi_min_rtt << "\t"
-                << tcpinfo.tcpi_rtt << "\t"
-                << send_cnt << "\t"
-                << tcpinfo.tcpi_rtt << "\t"
-                << sock.get_throughput() << "\t"
-                << send_cnt << "\t"
-                << sock.get_pacing_rate() << "\t"
-                << tcpinfo.tcpi_bytes_retrans << "\t"
-                << tcpinfo.tcpi_packets_out << "\t"
-                << tcpinfo.tcpi_retrans_out << "\t"
-                << tcpinfo.tcpi_snd_cwnd << "\t"
-                << tcpinfo.tcpi_snd_cwnd << "\t"
-                << tcpinfo.tcpi_snd_cwnd << endl;
+      unsigned int srtt = state["srtt_us"];
+      srtt = srtt >> 3; // Convert to microseconds
+      *perf_log << state["min_rtt"] << "\t" << state["avg_urtt"] << "\t"
+                << state["cnt"] << "\t" << srtt << "\t" << state["avg_thr"]
+                << "\t" << state["thr_cnt"] << "\t" << state["pacing_rate"]
+                << "\t" << state["loss_bytes"] << "\t" << state["packets_out"]
+                << "\t" << state["retrans_out"] << "\t"
+                << state["max_packets_out"] << "\t" << state["cwnd"] << "\t"
+                << 0 << endl;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
   }
 }
 
