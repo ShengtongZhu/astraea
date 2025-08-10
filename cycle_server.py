@@ -118,7 +118,11 @@ class CycleServerManager:
     
     def start_server(self, cc_algo, perf_log=None):
         """Start the new server sender process with specified CC"""
+        # Get the original user (before sudo) to run server as non-root
+        original_user = os.environ.get('SUDO_USER', 'nobody')
+        
         cmd = [
+            "sudo", "-u", original_user,
             "./src/build/bin/new_server_sender",
             f"--port={self.data_port}",
             f"--cong={cc_algo}",
@@ -129,7 +133,7 @@ class CycleServerManager:
         if perf_log:
             cmd.append(f"--perf-log={perf_log}")
         
-        print(f"Starting server with CC: {cc_algo}")
+        print(f"Starting server as user '{original_user}' with CC: {cc_algo}")
         self.server_process = subprocess.Popen(cmd)
         
         # Give server time to start and bind to port
