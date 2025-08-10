@@ -70,7 +70,7 @@ class CycleServerManager:
         except Exception as e:
             print(f"Error notifying client: {e}")
     
-    def start_tcpdump(self, interface="eth0", output_file="network_trace.pcap"):
+    def start_tcpdump(self, interface="eno1", output_file="network_trace.pcap"):
         """Start tcpdump to capture network traffic"""
         abs_output_file = os.path.abspath(output_file)
         cmd = [
@@ -172,7 +172,7 @@ class CycleServerManager:
             self.server_process.wait()
             self.server_process = None
     
-    def handle_single_request(self, interface="eth0"):
+    def handle_single_request(self, interface="eno1"):
         """Handle a single client request with full cycle"""
         # Wait for client request
         cc_algo, request_size = self.wait_for_client_request()
@@ -226,7 +226,7 @@ class CycleServerManager:
         
         return True
     
-    def run_cycle_experiment(self, interface="eth0"):
+    def run_cycle_experiment(self, interface="eno1"):
         """Run continuous experiment handling multiple requests"""
         self.experiment_start_time = time.time()
         
@@ -265,7 +265,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     
     # Get network interface from command line or use default
-    interface = sys.argv[1] if len(sys.argv) > 1 else "eth0"
+    interface = sys.argv[1] if len(sys.argv) > 1 else "eno1"
     
     server_manager = CycleServerManager()
     server_manager.run_cycle_experiment(interface=interface)
