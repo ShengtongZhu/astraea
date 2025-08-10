@@ -4,15 +4,73 @@ import time
 import signal
 import sys
 import os
+import socket
+import json
 from datetime import datetime
 
-target_cc = "astraea"
+from cycle_client import request_count
 
 class CycleServerManager:
     def __init__(self):
         self.server_process = None
         self.tcpdump_process = None
+        self.coord_socket = None
+        self.coord_server_socket = None
         self.experiment_start_time = None
+        self.request_count = 0
+        self.coord_port = 8889  # Coordination port
+        self.data_port = 8888   # Data transfer port
+    
+    def start_coordination_server(self):
+        """Start coordination server to receive client requests"""
+        self.coord_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.coord_server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.coord_server_socket.bind(('', self.coord_port))
+        self.coord_server_socket.listen(1)
+        print(f"Coordination server listening on port {self.coord_port}")
+    
+    def stop_coordination_server(self):
+        """Stop coordination server"""
+        if self.coord_server_socket:
+            self.coord_server_socket.close()
+            self.coord_server_socket = None
+    
+    def wait_for_client_request(self):
+        """Wait for client request with CC and size info"""
+        try:
+            print("Waiting for client request...")
+            self.coord_socket, addr = self.coord_server_socket.accept()
+            print(f"Client connected from {addr}")
+            
+            # Receive request message
+            data = self.coord_socket.recv(1024).decode('utf-8')
+            request = json.loads(data)
+            
+            cc_algo = request['cc_algo']
+            request_size = request['request_size']
+            
+            print(f"Received request: CC={cc_algo}, Size={request_size} bytes")
+            
+            # Send acknowledgment
+            response = {'status': 'ready'}
+            self.coord_socket.send(json.dumps(response).encode('utf-8'))
+            
+            return cc_algo, request_size
+            
+        except Exception as e:
+            print(f"Error receiving client request: {e}")
+            return None, None
+    
+    def notify_client_completion(self):
+        """Notify client that request is completed"""
+        try:
+            if self.coord_socket:
+                response = {'status': 'completed'}
+                self.coord_socket.send(json.dumps(response).encode('utf-8'))
+                self.coord_socket.close()
+                self.coord_socket = None
+        except Exception as e:
+            print(f"Error notifying client: {e}")
     
     def start_tcpdump(self, interface="eth0", output_file="network_trace.pcap"):
         """Start tcpdump to capture network traffic"""
@@ -21,10 +79,10 @@ class CycleServerManager:
             "-i", interface,
             "-w", output_file,
             "-s", "100",  # Capture full packets
-            "port", "8888"  # Only capture traffic on our server port
+            "port", str(self.data_port)  # Only capture traffic on data port
         ]
         
-        print(f"Starting tcpdump: {' '.join(cmd)}")
+        print(f"Starting tcpdump: {output_file}")
         self.tcpdump_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(1)  # Give tcpdump time to start
         return self.tcpdump_process
@@ -52,7 +110,7 @@ class CycleServerManager:
     def save_dmesg(self, output_file="dmesg_log.txt"):
         """Save current dmesg output to file"""
         print(f"Saving dmesg to {output_file}...")
-        result = subprocess.run(["dmesg"], capture_output=True, text=True)
+        result = subprocess.run(["sudo", "dmesg"], capture_output=True, text=True)
         if result.returncode == 0:
             with open(output_file, 'w') as f:
                 f.write(result.stdout)
@@ -60,18 +118,18 @@ class CycleServerManager:
         else:
             print(f"Error: Failed to capture dmesg: {result.stderr}")
     
-    def start_server(self, port=8888, cc_algo=target_cc, perf_log=None):
-        """Start the new server sender process"""
-        cmd = ["./src/build/bin/new_server_sender", "--port", str(port), "--cc", cc_algo]
+    def start_server(self, cc_algo, perf_log=None):
+        """Start the new server sender process with specified CC"""
+        cmd = ["./src/build/bin/new_server_sender", "--port", str(self.data_port), "--cong", cc_algo, "--pyhelper", "./python/infer.py", "--model", "./models/py-model1/"]
         
         if perf_log:
             cmd.extend(["--perf-log", perf_log])
         
-        print(f"Starting server with command: {' '.join(cmd)}")
+        print(f"Starting server with CC: {cc_algo}")
         self.server_process = subprocess.Popen(cmd)
         
-        # Give server time to start
-        time.sleep(1)
+        # Give server time to start and bind to port
+        time.sleep(2)
         return self.server_process
     
     def stop_server(self):
@@ -87,59 +145,97 @@ class CycleServerManager:
                 self.server_process.wait()
             self.server_process = None
     
-    def is_server_running(self):
-        """Check if server is still running"""
-        return self.server_process is not None and self.server_process.poll() is None
+    def wait_for_server_exit(self):
+        """Wait for server to exit (indicating request completed)"""
+        if self.server_process:
+            print("Waiting for server to complete request...")
+            self.server_process.wait()
+            self.server_process = None
     
-    def run_cycle_experiment(self, interface="eth0"):
-        """Run the complete experiment with tcpdump and dmesg logging"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        tcpdump_file = f"{target_cc}_{timestamp}.pcap"
-        dmesg_file = f"{target_cc}_{timestamp}.txt"
-        server_perf_log = f"{target_cc}_{timestamp}.log"
+    def handle_single_request(self, interface="eth0"):
+        """Handle a single client request with full cycle"""
+        # Wait for client request
+        cc_algo, request_size = self.wait_for_client_request()
+        if cc_algo is None:
+            return False
         
-        self.experiment_start_time = time.time()
+        self.request_count += 1
+        request_start_time = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        
+        tcpdump_file = f"{cc_algo}_{request_size}_{request_start_time}.pcap"
+        dmesg_file = f"{cc_algo}_{request_size}_{request_start_time}_dmesg.txt"
+        server_perf_log = f"{cc_algo}_{request_size}_{request_count}_{request_start_time}_server.log"
         
         try:
+            print(f"\n=== Request {self.request_count} - {request_start_time} ===")
+            print(f"CC: {cc_algo}, Size: {request_size} bytes")
+            
             # Step 1: Clear dmesg buffer
             self.clear_dmesg()
             
             # Step 2: Start tcpdump
             self.start_tcpdump(interface=interface, output_file=tcpdump_file)
             
-            # Step 3: Start server
-            self.start_server(port=8888, cc_algo=target_cc, perf_log=server_perf_log)
+            # Step 3: Start server with specified CC
+            self.start_server(cc_algo=cc_algo, perf_log=server_perf_log)
             
-            print(f"\nExperiment started at {datetime.now()}")
-            print(f"Network trace will be saved to: {tcpdump_file}")
-            print(f"dmesg log will be saved to: {dmesg_file}")
-            print(f"Server performance log: {server_perf_log}")
-            print("\nServer is ready for client connections...")
-            print("Press Ctrl+C to stop the experiment")
+            print("Server ready for data connection...")
             
-            # Keep server running and handle multiple client connections
+            # Step 4: Wait for server to complete the request
+            self.wait_for_server_exit()
+            
+            print(f"Request {self.request_count} completed")
+            
+            # Step 5: Notify client of completion
+            self.notify_client_completion()
+            
+        except Exception as e:
+            print(f"Error handling request {self.request_count}: {e}")
+            return False
+        
+        finally:
+            # Step 6: Cleanup after request
+            self.stop_server()
+            self.stop_tcpdump()
+            self.save_dmesg(dmesg_file)
+            
+            print(f"Request {self.request_count} files saved:")
+            print(f"  - Network trace: {tcpdump_file}")
+            print(f"  - dmesg log: {dmesg_file}")
+            print(f"  - Server performance: {server_perf_log}")
+        
+        return True
+    
+    def run_cycle_experiment(self, interface="eth0"):
+        """Run continuous experiment handling multiple requests"""
+        self.experiment_start_time = time.time()
+        
+        print(f"Starting cycle server experiment on interface: {interface}")
+        print("Note: This script requires sudo privileges for tcpdump and dmesg operations")
+        print(f"Coordination server on port {self.coord_port}, data server on port {self.data_port}")
+        print("Press Ctrl+C to stop the experiment\n")
+        
+        try:
+            self.start_coordination_server()
+            
             while True:
-                if not self.is_server_running():
-                    print("Server process died, restarting...")
-                    self.start_server(port=8888, cc_algo="cubic", perf_log=server_perf_log)
-                
-                time.sleep(1)
+                success = self.handle_single_request(interface=interface)
+                if not success:
+                    print("Failed to handle request, continuing...")
+                print("Ready for next client request...\n")
                 
         except KeyboardInterrupt:
             print("\nReceived interrupt signal, stopping experiment...")
         
         finally:
-            # Cleanup: stop server, stop tcpdump, save dmesg
+            # Final cleanup
             self.stop_server()
             self.stop_tcpdump()
-            self.save_dmesg(dmesg_file)
+            self.stop_coordination_server()
             
             experiment_duration = time.time() - self.experiment_start_time
             print(f"\nExperiment completed after {experiment_duration:.2f} seconds")
-            print(f"Files generated:")
-            print(f"  - Network trace: {tcpdump_file}")
-            print(f"  - dmesg log: {dmesg_file}")
-            print(f"  - Server performance: {server_perf_log}")
+            print(f"Total requests handled: {self.request_count}")
 
 def signal_handler(sig, frame):
     print("\nReceived interrupt signal")
@@ -150,9 +246,6 @@ if __name__ == "__main__":
     
     # Get network interface from command line or use default
     interface = sys.argv[1] if len(sys.argv) > 1 else "eth0"
-    
-    print(f"Starting cycle server experiment on interface: {interface}")
-    print("Note: This script requires sudo privileges for tcpdump and dmesg operations")
     
     server_manager = CycleServerManager()
     server_manager.run_cycle_experiment(interface=interface)

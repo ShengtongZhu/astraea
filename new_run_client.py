@@ -10,7 +10,7 @@ def run_client(server_ip="127.0.0.1", port=8888, size_bytes=1024*1024, cc_algo="
         "--ip", server_ip,
         "--port", str(port),
         "--size", str(size_bytes),
-        "--cc", cc_algo
+        "--cong", cc_algo
     ]
     
     if perf_log:

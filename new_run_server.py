@@ -10,7 +10,7 @@ class NewServerManager:
     
     def start_server(self, port=8888, cc_algo="cubic", perf_log=None):
         """Start the new server sender process"""
-        cmd = ["./src/build/bin/new_server_sender", "--port", str(port), "--cc", cc_algo]
+        cmd = ["./src/build/bin/new_server_sender", "--port", str(port), "--cong", cc_algo, "--pyhelper", "./python/infer.py", "--model", "./models/py-model1/"]
         
         if perf_log:
             cmd.extend(["--perf-log", perf_log])
