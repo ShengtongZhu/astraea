@@ -587,7 +587,8 @@ static void astraea_cong_control(struct sock* sk,
     u32 upper_bound;
 		temp = temp >> BW_SCALE;
 		upper_bound = temp + 1;
-		if(ca->pmodrl->nominator != 0){
+		if(bbr->pmodrl->nominator != 0){
+      u32 multiplier;
 			multiplier = BASED_UNIT;
 			multiplier = multiplier * probe_per / 20;
 			temp = upper_bound * multiplier;
