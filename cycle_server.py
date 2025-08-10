@@ -119,7 +119,17 @@ class CycleServerManager:
     def start_server(self, cc_algo, perf_log=None):
         """Start the new server sender process with specified CC"""
         
+        # Get the original user who ran sudo
+        original_user = os.environ.get('SUDO_USER', 'nobody')
+        
+        # Get current working directory (should be the astraea directory)
+        astraea_dir = os.getcwd()
+        
+        # Build command to run as original user with preserved environment
         cmd = [
+            "sudo", "-E", "-u", original_user,  # -E preserves environment including virtual env
+            "-H",  # Use original user's home directory
+            "--",
             "./src/build/bin/new_server_sender",
             f"--port={self.data_port}",
             f"--cong={cc_algo}",
@@ -130,8 +140,11 @@ class CycleServerManager:
         if perf_log:
             cmd.append(f"--perf-log={perf_log}")
         
-        print(f"Starting server with CC: {cc_algo}")
-        self.server_process = subprocess.Popen(cmd)
+        print(f"Starting server as user '{original_user}' with CC: {cc_algo}")
+        print(f"Working directory: {astraea_dir}")
+        
+        # Run in the astraea directory with preserved environment
+        self.server_process = subprocess.Popen(cmd, cwd=astraea_dir)
         
         # Give server time to start and bind to port
         time.sleep(2)
