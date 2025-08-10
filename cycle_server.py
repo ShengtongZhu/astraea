@@ -8,8 +8,6 @@ import socket
 import json
 from datetime import datetime
 
-from cycle_client import request_count
-
 class CycleServerManager:
     def __init__(self):
         self.server_process = None
