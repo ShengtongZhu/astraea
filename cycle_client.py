@@ -52,14 +52,14 @@ def run_client(server_ip="127.0.0.1", port=8888, size_bytes=1024*1024, cc_algo="
     """Run the new client receiver with specified parameters"""
     cmd = [
         "./src/build/bin/new_client_receiver",
-        "--ip", server_ip,
-        "--port", str(port),
-        "--size", str(size_bytes),
-        "--cong", cc_algo
+        f"--ip={server_ip}",
+        f"--port={port}",
+        f"--size={size_bytes}",
+        f"--cong={cc_algo}"
     ]
     
     if perf_log:
-        cmd.extend(["--perf-log", perf_log])
+        cmd.append(f"--perf-log={perf_log}")
     
     print(f"Running client with command: {' '.join(cmd)}")
     

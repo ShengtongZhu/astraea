@@ -118,10 +118,16 @@ class CycleServerManager:
     
     def start_server(self, cc_algo, perf_log=None):
         """Start the new server sender process with specified CC"""
-        cmd = ["./src/build/bin/new_server_sender", "--port", str(self.data_port), "--cong", cc_algo, "--pyhelper", "./python/infer.py", "--model", "./models/py-model1/"]
+        cmd = [
+            "./src/build/bin/new_server_sender",
+            f"--port={self.data_port}",
+            f"--cong={cc_algo}",
+            f"--pyhelper=./python/infer.py",
+            f"--model=./models/py-model1/"
+        ]
         
         if perf_log:
-            cmd.extend(["--perf-log", perf_log])
+            cmd.append(f"--perf-log={perf_log}")
         
         print(f"Starting server with CC: {cc_algo}")
         self.server_process = subprocess.Popen(cmd)
