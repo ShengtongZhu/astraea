@@ -479,6 +479,7 @@ static void astraea_cong_control(struct sock* sk,
   struct inet_sock *inet = inet_sk(sk);
   // print rate sample
   u64 bw;
+  u64 srtt = tp->srtt_us >> 3;
 
   // we believe cwnd has been modified by user-space RL-agent
   u32 cwnd = max(tp->prior_cwnd, bbr->prior_cwnd);
@@ -581,6 +582,23 @@ static void astraea_cong_control(struct sock* sk,
 			sk->sk_pacing_rate = pmodrl_rate;
 		}
 	}
+  if(bbr->pmodrl && bbr->pmodrl->classify == 1 && bbr->pmodrl->upper_bound == 1 && optimize_flag){
+    u64 temp = ca->pmodrl->R_arr[ca->pmodrl->best_index] * srtt;
+    u32 upper_bound;
+		temp = temp >> BW_SCALE;
+		upper_bound = temp + 1;
+		if(ca->pmodrl->nominator != 0){
+			multiplier = BASED_UNIT;
+			multiplier = multiplier * probe_per / 20;
+			temp = upper_bound * multiplier;
+			temp = temp >> BASED_SCALE;
+			temp = temp + 1;
+			upper_bound = temp;
+		}
+		if(tp->snd_cwnd > upper_bound){
+			tp->snd_cwnd = upper_bound;
+		}
+  }
 
   // printk(KERN_INFO
   //        "%s: snd_cwnd: %u, rcv_wnd: %u, current_state: %u, pacing_rate: %lu, "
