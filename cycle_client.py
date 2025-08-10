@@ -159,7 +159,7 @@ if __name__ == "__main__":
                         continue
                     
                     # Step 2: Small delay to ensure server is ready
-                    time.sleep(1)
+                    time.sleep(5)
                     request_start_time = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
                     
                     # Step 3: Run data client
