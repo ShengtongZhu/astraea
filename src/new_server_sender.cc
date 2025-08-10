@@ -201,7 +201,7 @@ int main(int argc, char** argv) {
       {"port", required_argument, nullptr, 'p'},
       {"pyhelper", required_argument, nullptr, 'h'},
       {"model", required_argument, nullptr, 'm'},
-      {"cong", optional_argument, nullptr, 'c'},
+      {"cong", required_argument, nullptr, 'c'},  // Change to required_argument
       {"interval", optional_argument, nullptr, 't'},
       {"id", optional_argument, nullptr, 'f'},
       {"perf-log", optional_argument, nullptr, 'l'},
