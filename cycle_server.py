@@ -130,7 +130,7 @@ class CycleServerManager:
         if perf_log:
             cmd.append(f"--perf-log={perf_log}")
         
-        print(f"Starting server as user '{original_user}' with CC: {cc_algo}")
+        print(f"Starting server with CC: {cc_algo}")
         self.server_process = subprocess.Popen(cmd)
         
         # Give server time to start and bind to port
