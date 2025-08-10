@@ -114,10 +114,10 @@ def log_request_data(log_file, start_time, cc_algo, request_size_bytes, duration
 
 if __name__ == "__main__":
     # Define CC algorithms and request sizes
-    cc_arr = ["astraea", "cubic", "bbr"]  # Iterate through CC first
+    cc_arr = ["astraea"]  # Iterate through CC first
     size_cycle_kb = [32 * 1024, 16 * 1024, 8 * 1024, 4 * 1024, 2 * 1024, 1 * 1024, 512]  # Then sizes
     
-    server_ip = "127.0.0.1"
+    server_ip = "103.49.160.232"
     coord_port = 8889   # Coordination port
     data_port = 8888    # Data transfer port
     client_cc = "cubic" # Client-side CC algorithm
