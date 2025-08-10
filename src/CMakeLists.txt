@@ -51,6 +51,9 @@ add_executable(passive_client passive_client.cc)
 if(COMPILE_INFERENCE_SERVICE)
     add_executable(client_eval_batch client_eval_batch.cc)
     add_executable(client_eval_batch_udp client_eval_batch_udp.cc)
+# NEW: no-communication size argument variants
+add_executable(new_client_receiver_nocomm new_client_receiver_nocomm.cc)
+add_executable(new_server_sender_nocomm new_server_sender_nocomm.cc)
 endif()
 
 # link libraries
@@ -64,6 +67,9 @@ target_link_libraries(server_sender PRIVATE nlohmann_json::nlohmann_json net pth
 target_link_libraries(new_client_receiver PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
 target_link_libraries(new_server_sender PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
 target_link_libraries(passive_client PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
+# NEW: link libraries for no-communication size argument variants
+target_link_libraries(new_client_receiver_nocomm PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
+target_link_libraries(new_server_sender_nocomm PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
 if(COMPILE_INFERENCE_SERVICE)
     target_link_libraries(client_eval_batch PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
     target_link_libraries(client_eval_batch_udp PRIVATE nlohmann_json::nlohmann_json net pthread stdc++fs)
