@@ -72,15 +72,17 @@ class CycleServerManager:
     
     def start_tcpdump(self, interface="eth0", output_file="network_trace.pcap"):
         """Start tcpdump to capture network traffic"""
+        abs_output_file = os.path.abspath(output_file)
         cmd = [
-            "sudo", "tcpdump", 
+            "sudo", "tcpdump",
             "-i", interface,
-            "-w", output_file,
-            "-s", "100",  # Capture full packets
+            "-w", abs_output_file,
+            "-U",  # flush packets to file as they arrive
+            "-s", "100",  # Capture first 100 bytes per packet
             "port", str(self.data_port)  # Only capture traffic on data port
         ]
         
-        print(f"Starting tcpdump: {output_file}")
+        print(f"Starting tcpdump: {abs_output_file}")
         self.tcpdump_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(1)  # Give tcpdump time to start
         return self.tcpdump_process
@@ -178,7 +180,7 @@ class CycleServerManager:
             return False
         
         self.request_count += 1
-        request_start_time = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        request_start_time = datetime.now().strftime("%m-%d-%H-%M-%S")
         
         tcpdump_file = f"{cc_algo}_{request_size}_{request_start_time}.pcap"
         dmesg_file = f"{cc_algo}_{request_size}_{request_start_time}_dmesg.txt"

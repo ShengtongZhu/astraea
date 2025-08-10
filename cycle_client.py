@@ -81,7 +81,7 @@ def run_client(server_ip="127.0.0.1", port=8888, size_bytes=1024*1024, cc_algo="
 
 def log_request_data(log_file, start_time, cc_algo, request_size_bytes, duration, success, throughput_kbps=None):
     """Log request data to CSV file"""
-    start_time_str = datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    start_time_str = datetime.fromtimestamp(start_time).strftime('%m-%d-%H-%M-%S')
     
     # Check if file exists to write header
     file_exists = False
@@ -101,7 +101,7 @@ def log_request_data(log_file, start_time, cc_algo, request_size_bytes, duration
             writer.writeheader()
         
         writer.writerow({
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3],
+            'timestamp': datetime.now().strftime('%m-%d-%H-%M-%S'),
             'start_time': start_time_str,
             'server_cc_algo': cc_algo,  # Server CC (used for data transfer)
             'client_cc_algo': 'cubic',   # Client CC (can be made configurable)
@@ -123,7 +123,7 @@ if __name__ == "__main__":
     client_cc = "cubic" # Client-side CC algorithm
     
     # Create log file with timestamp
-    log_filename = f"client_requests_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    log_filename = f"client_requests_{datetime.now().strftime('%m-%d-%H-%M-%S')}.csv"
     
     print(f"Starting coordinated client cycle")
     print(f"CC algorithms: {cc_arr}")
@@ -160,7 +160,7 @@ if __name__ == "__main__":
                     
                     # Step 2: Small delay to ensure server is ready
                     time.sleep(5)
-                    request_start_time = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                    request_start_time = datetime.now().strftime("%m-%d-%H-%M-%S")
                     
                     # Step 3: Run data client
                     success, duration, start_time = run_client(
