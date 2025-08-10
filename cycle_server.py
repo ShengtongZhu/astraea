@@ -102,7 +102,7 @@ class CycleServerManager:
                 return subprocess.run(["sudo"] + base_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         def pgrep_tcpdump():
-            res = subprocess.run(["pgrep", "-x", "tcpdump"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            res = subprocess.run(["pgrep", "-x", "tcpdump"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if res.returncode != 0 or not res.stdout.strip():
                 return []
             return [int(x) for x in res.stdout.strip().splitlines() if x.strip().isdigit()]
@@ -254,6 +254,7 @@ class CycleServerManager:
             print(f"Request {self.request_count} completed")
             
             # Immediately stop tcpdump once the request is completed
+            time.sleep(5)
             self.stop_tcpdump()
             self.save_dmesg(dmesg_file)
             

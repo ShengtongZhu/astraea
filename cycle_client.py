@@ -189,7 +189,7 @@ if __name__ == "__main__":
                     
                     # Wait 10 seconds before next request
                     print(f"Waiting 10 seconds before next request...")
-                    time.sleep(10)
+                    time.sleep(19)
             
             print(f"Completed cycle {cycle_count} with all CC algorithms")
             time.sleep(2)  # Delay between cycles
