@@ -51,6 +51,8 @@ add_executable(passive_client passive_client.cc)
 if(COMPILE_INFERENCE_SERVICE)
     add_executable(client_eval_batch client_eval_batch.cc)
     add_executable(client_eval_batch_udp client_eval_batch_udp.cc)
+endif()
+
 # NEW: no-communication size argument variants
 add_executable(new_client_receiver_nocomm new_client_receiver_nocomm.cc)
 add_executable(new_server_sender_nocomm new_server_sender_nocomm.cc)
