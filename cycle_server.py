@@ -206,6 +206,10 @@ class CycleServerManager:
             
             print(f"Request {self.request_count} completed")
             
+            # Immediately stop tcpdump once the request is completed
+            self.stop_tcpdump()
+            self.save_dmesg(dmesg_file)
+            
             # Step 5: Notify client of completion
             self.notify_client_completion()
             
