@@ -583,7 +583,7 @@ static void astraea_cong_control(struct sock* sk,
 		}
 	}
   if(bbr->pmodrl && bbr->pmodrl->classify == 1 && bbr->pmodrl->upper_bound == 1 && optimize_flag){
-    u64 temp = ca->pmodrl->R_arr[ca->pmodrl->best_index] * srtt;
+    u64 temp = bbr->pmodrl->R_arr[bbr->pmodrl->best_index] * srtt;
     u32 upper_bound;
 		temp = temp >> BW_SCALE;
 		upper_bound = temp + 1;
