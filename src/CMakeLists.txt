@@ -56,7 +56,6 @@ endif()
 # NEW: no-communication size argument variants
 add_executable(new_client_receiver_nocomm new_client_receiver_nocomm.cc)
 add_executable(new_server_sender_nocomm new_server_sender_nocomm.cc)
-endif()
 
 # link libraries
 target_link_libraries(server PRIVATE net pthread)
