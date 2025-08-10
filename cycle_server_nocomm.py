@@ -304,38 +304,6 @@ class CycleServerNocommManager:
             sys.exit(0)
         finally:
             self.stop_coordination_server()
-    cc_arr = ["astraea"]  # Server-side CC algos to test
-    size_cycle_kb = [32 * 1024, 16 * 1024, 8 * 1024, 4 * 1024, 2 * 1024, 1 * 1024, 512]  # sizes in KB
-
-    print("Starting server cycle (nocomm)")
-    print(f"CC algorithms: {cc_arr}")
-    print(f"Request sizes: {size_cycle_kb} KB")
-    print(f"Data connection (listening) on port: {self.data_port}")
-    print("Press Ctrl+C to stop\n")
-
-    cycle_count = 0
-    try:
-        while True:
-            cycle_count += 1
-            print(f"\n=== Cycle {cycle_count} ===")
-
-            for cc_algo in cc_arr:
-                print(f"\n--- Testing CC Algorithm: {cc_algo} ---")
-                for size_kb in size_cycle_kb:
-                    size_bytes = size_kb * 1024
-                    print(f"\n--- Request: {cc_algo} + {size_kb} KB ---")
-                    success = self.handle_single_request(cc_algo=cc_algo, request_size=size_bytes, interface=interface)
-                    if not success:
-                        print("Request failed, continuing to next...")
-                    print("Waiting 10 seconds before next request...")
-                    time.sleep(10)
-
-            print(f"Completed cycle {cycle_count} with all CC algorithms")
-            time.sleep(2)  # Delay between cycles
-
-    except KeyboardInterrupt:
-        print(f"\nStopped after {cycle_count} cycles, {self.request_count} total requests")
-        sys.exit(0)
 
 def signal_handler(sig, frame):
     print("\nReceived interrupt, exiting...")
