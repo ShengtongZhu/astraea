@@ -482,20 +482,20 @@ static void astraea_cong_control(struct sock* sk,
   u64 srtt = tp->srtt_us >> 3;
 
   // we believe cwnd has been modified by user-space RL-agent
-  // u32 cwnd = max(tp->prior_cwnd, bbr->prior_cwnd);
-  // tp->snd_cwnd = max(tp->snd_cwnd, cwnd);
-  // astraea_update_cwnd(sk);
+  u32 cwnd = max(tp->prior_cwnd, bbr->prior_cwnd);
+  tp->snd_cwnd = max(tp->snd_cwnd, cwnd);
+  astraea_update_cwnd(sk);
 
-  // if (rs->delivered < 0 || rs->interval_us <= 0) {
-  //   bw = 0;
-  // } else {
-  //   // we first need to enlarge bw thus avoiding get zero
-  //   bw = (u64)rs->delivered * THR_UNIT;
-  //   do_div(bw, rs->interval_us);
-  //   // deliverd is num of packers, we translate it to bytes, bw in bytes per
-  //   // second
-  //   bw = bw * tp->mss_cache * USEC_PER_SEC >> THR_SCALE;
-  // }
+  if (rs->delivered < 0 || rs->interval_us <= 0) {
+    bw = 0;
+  } else {
+    // we first need to enlarge bw thus avoiding get zero
+    bw = (u64)rs->delivered * THR_UNIT;
+    do_div(bw, rs->interval_us);
+    // deliverd is num of packers, we translate it to bytes, bw in bytes per
+    // second
+    bw = bw * tp->mss_cache * USEC_PER_SEC >> THR_SCALE;
+  }
 
   if(bbr->pmodrl){
   	if(bbr->pmodrl->min_rtt_us == 0){
@@ -568,13 +568,13 @@ static void astraea_cong_control(struct sock* sk,
 		}	
 	}
 
-	// if(bbr->pmodrl && bbr->pmodrl->classify == 1 && bbr->pmodrl->upper_bound == 1){
-	// 	unsigned long pmodrl_rate = bbr_bw_to_pacing_rate_pmodrl(sk, bbr->pmodrl->R_arr[bbr->pmodrl->best_index], BBR_UNIT, bbr->pmodrl->nominator);
-	// 	// printA(KERN_INFO "!!! rate:%llu  pmodrl_rate:%llu\n",rate, pmodrl_rate);
-	// 	if(sk->sk_pacing_rate > pmodrl_rate && optimize_flag){
-	// 		sk->sk_pacing_rate = pmodrl_rate;
-	// 	}
-	// }
+	if(bbr->pmodrl && bbr->pmodrl->classify == 1 && bbr->pmodrl->upper_bound == 1){
+		unsigned long pmodrl_rate = bbr_bw_to_pacing_rate_pmodrl(sk, bbr->pmodrl->R_arr[bbr->pmodrl->best_index], BBR_UNIT, bbr->pmodrl->nominator);
+		// printA(KERN_INFO "!!! rate:%llu  pmodrl_rate:%llu\n",rate, pmodrl_rate);
+		if(sk->sk_pacing_rate > pmodrl_rate && optimize_flag){
+			sk->sk_pacing_rate = pmodrl_rate;
+		}
+	}
   if(bbr->pmodrl && bbr->pmodrl->classify == 1 && bbr->pmodrl->upper_bound == 1 && optimize_flag){
     u64 temp = bbr->pmodrl->R_arr[bbr->pmodrl->best_index] * srtt;
     u32 upper_bound;
