@@ -101,14 +101,14 @@ class CycleServerManager:
     def clear_dmesg(self):
         """Clear the kernel log buffer"""
         print("Clearing dmesg buffer...")
-        result = subprocess.run(["sudo", "dmesg", "-C"], capture_output=True, text=True)
+        result = subprocess.run(["sudo", "dmesg", "-C"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         if result.returncode != 0:
             print(f"Warning: Failed to clear dmesg buffer: {result.stderr}")
     
     def save_dmesg(self, output_file="dmesg_log.txt"):
         """Save current dmesg output to file"""
         print(f"Saving dmesg to {output_file}...")
-        result = subprocess.run(["sudo", "dmesg"], capture_output=True, text=True)
+        result = subprocess.run(["sudo", "dmesg"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         if result.returncode == 0:
             with open(output_file, 'w') as f:
                 f.write(result.stdout)

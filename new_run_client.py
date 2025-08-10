@@ -19,7 +19,7 @@ def run_client(server_ip="127.0.0.1", port=8888, size_bytes=1024*1024, cc_algo="
     print(f"Running client with command: {' '.join(cmd)}")
     
     start_time = time.time()
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
     end_time = time.time()
     
     duration = end_time - start_time

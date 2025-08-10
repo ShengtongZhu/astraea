@@ -48,23 +48,23 @@ def wait_for_completion(coord_sock):
         coord_sock.close()
         return False
 
-def run_client(server_ip, data_port, size_bytes, cc_algo, perf_log=None):
+def run_client(server_ip="127.0.0.1", port=8888, size_bytes=1024*1024, cc_algo="cubic", perf_log=None):
     """Run the new client receiver with specified parameters"""
     cmd = [
         "./src/build/bin/new_client_receiver",
         "--ip", server_ip,
-        "--port", str(data_port),
+        "--port", str(port),
         "--size", str(size_bytes),
-        "--cc", cc_algo
+        "--cong", cc_algo
     ]
     
     if perf_log:
         cmd.extend(["--perf-log", perf_log])
     
-    print(f"Running client: CC={cc_algo}, Size={size_bytes}")
+    print(f"Running client with command: {' '.join(cmd)}")
     
     start_time = time.time()
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
     end_time = time.time()
     
     duration = end_time - start_time
