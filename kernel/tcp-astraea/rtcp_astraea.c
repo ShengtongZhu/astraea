@@ -482,20 +482,20 @@ static void astraea_cong_control(struct sock* sk,
   u64 srtt = tp->srtt_us >> 3;
 
   // we believe cwnd has been modified by user-space RL-agent
-  u32 cwnd = max(tp->prior_cwnd, bbr->prior_cwnd);
-  tp->snd_cwnd = max(tp->snd_cwnd, cwnd);
-  astraea_update_cwnd(sk);
+  // u32 cwnd = max(tp->prior_cwnd, bbr->prior_cwnd);
+  // tp->snd_cwnd = max(tp->snd_cwnd, cwnd);
+  // astraea_update_cwnd(sk);
 
-  if (rs->delivered < 0 || rs->interval_us <= 0) {
-    bw = 0;
-  } else {
-    // we first need to enlarge bw thus avoiding get zero
-    bw = (u64)rs->delivered * THR_UNIT;
-    do_div(bw, rs->interval_us);
-    // deliverd is num of packers, we translate it to bytes, bw in bytes per
-    // second
-    bw = bw * tp->mss_cache * USEC_PER_SEC >> THR_SCALE;
-  }
+  // if (rs->delivered < 0 || rs->interval_us <= 0) {
+  //   bw = 0;
+  // } else {
+  //   // we first need to enlarge bw thus avoiding get zero
+  //   bw = (u64)rs->delivered * THR_UNIT;
+  //   do_div(bw, rs->interval_us);
+  //   // deliverd is num of packers, we translate it to bytes, bw in bytes per
+  //   // second
+  //   bw = bw * tp->mss_cache * USEC_PER_SEC >> THR_SCALE;
+  // }
 
   if(bbr->pmodrl){
   	if(bbr->pmodrl->min_rtt_us == 0){
@@ -565,23 +565,16 @@ static void astraea_cong_control(struct sock* sk,
 
 		if(exclude_applimited && rs->is_app_limited){
 			reset_pmodrl(sk, (u8)9, (u8)10);
-		}
-		if(enable_printk){
-			printk(KERN_INFO "!!!ACK: ip:%pI4 port:%hu c:%u B:%llu R:%llu n:%u u_p:%lu r_p:%lu b:%llu d:%u l:%u rd:%u rl:%u u:%u rc:%u rcn:%u cl:%u def:%u cwnd:%u adv:%u inflight:%u s:%llu", 
-				&sk->sk_daddr, ntohs(inet->inet_dport), bbr->pmodrl->classify, bbr->pmodrl->B_arr[bbr->pmodrl->best_index], bbr->pmodrl->R_arr[bbr->pmodrl->best_index], 
-				bbr->pmodrl->nominator, bbr_bw_to_pacing_rate_pmodrl(sk,bbr->pmodrl->R_arr[bbr->pmodrl->best_index],BBR_UNIT,bbr->pmodrl->nominator), sk->sk_pacing_rate, tp->bytes_acked, tp->delivered, tp->lost, 
-				rs->delivered, rs->losses ,bbr->pmodrl->upper_bound, bbr->pmodrl->round_count, bbr->pmodrl->round_count_no, tcp_is_cwnd_limited(sk), bbr->pmodrl->dis_enable_flag, tp->snd_cwnd, tp->rcv_wnd,tcp_packets_in_flight(tp),
-				tp->bytes_sent);	
 		}	
 	}
 
-	if(bbr->pmodrl && bbr->pmodrl->classify == 1 && bbr->pmodrl->upper_bound == 1){
-		unsigned long pmodrl_rate = bbr_bw_to_pacing_rate_pmodrl(sk, bbr->pmodrl->R_arr[bbr->pmodrl->best_index], BBR_UNIT, bbr->pmodrl->nominator);
-		// printA(KERN_INFO "!!! rate:%llu  pmodrl_rate:%llu\n",rate, pmodrl_rate);
-		if(sk->sk_pacing_rate > pmodrl_rate && optimize_flag){
-			sk->sk_pacing_rate = pmodrl_rate;
-		}
-	}
+	// if(bbr->pmodrl && bbr->pmodrl->classify == 1 && bbr->pmodrl->upper_bound == 1){
+	// 	unsigned long pmodrl_rate = bbr_bw_to_pacing_rate_pmodrl(sk, bbr->pmodrl->R_arr[bbr->pmodrl->best_index], BBR_UNIT, bbr->pmodrl->nominator);
+	// 	// printA(KERN_INFO "!!! rate:%llu  pmodrl_rate:%llu\n",rate, pmodrl_rate);
+	// 	if(sk->sk_pacing_rate > pmodrl_rate && optimize_flag){
+	// 		sk->sk_pacing_rate = pmodrl_rate;
+	// 	}
+	// }
   if(bbr->pmodrl && bbr->pmodrl->classify == 1 && bbr->pmodrl->upper_bound == 1 && optimize_flag){
     u64 temp = bbr->pmodrl->R_arr[bbr->pmodrl->best_index] * srtt;
     u32 upper_bound;
@@ -598,6 +591,16 @@ static void astraea_cong_control(struct sock* sk,
 		}
 		if(tp->snd_cwnd > upper_bound){
 			tp->snd_cwnd = upper_bound;
+		}
+  }
+
+  if(bbr->pmodrl){
+		if(enable_printk){
+			printk(KERN_INFO "!!!ACK: ip:%pI4 port:%hu c:%u B:%llu R:%llu n:%u u_p:%lu r_p:%lu b:%llu d:%u l:%u rd:%u rl:%u u:%u rc:%u rcn:%u cl:%u def:%u cwnd:%u adv:%u inflight:%u s:%llu", 
+				&sk->sk_daddr, ntohs(inet->inet_dport), bbr->pmodrl->classify, bbr->pmodrl->B_arr[bbr->pmodrl->best_index], bbr->pmodrl->R_arr[bbr->pmodrl->best_index], 
+				bbr->pmodrl->nominator, bbr_bw_to_pacing_rate_pmodrl(sk,bbr->pmodrl->R_arr[bbr->pmodrl->best_index],BBR_UNIT,bbr->pmodrl->nominator), sk->sk_pacing_rate, tp->bytes_acked, tp->delivered, tp->lost, 
+				rs->delivered, rs->losses ,bbr->pmodrl->upper_bound, bbr->pmodrl->round_count, bbr->pmodrl->round_count_no, tcp_is_cwnd_limited(sk), bbr->pmodrl->dis_enable_flag, tp->snd_cwnd, tp->rcv_wnd,tcp_packets_in_flight(tp),
+				tp->bytes_sent);	
 		}
   }
 
