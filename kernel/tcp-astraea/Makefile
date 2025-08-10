@@ -1,5 +1,8 @@
 bypass ?= n
-ifeq ($(bypass), y)
+rtcp ?= n
+ifeq ($(rtcp), y)
+	name = rtcp_astraea
+else ifeq ($(bypass), y)
 	name = tcp_astraea_bypass
 else
 	name = tcp_astraea
@@ -18,6 +21,11 @@ KDIR ?= /lib/modules/`uname -r`/build
 
 default:
 	$(MAKE) -C $(KDIR) M=$$PWD
+
+# Convenience target to build rtcp_astraea
+.PHONY: rtcp
+rtcp:
+	$(MAKE) rtcp=y default
 
 install:
 	sudo insmod $(name).ko

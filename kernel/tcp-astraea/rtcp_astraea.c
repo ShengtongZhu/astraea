@@ -34,6 +34,8 @@ static int exclude_rwnd = 0;
 static int exclude_applimited = 0;
 static int enable_printk = 1;
 
+#define MAX_STR_LEN 5000
+#define STORE_INTERVAL 400
 
 struct PMODRL {
 	u64   B_arr[9];
@@ -71,12 +73,12 @@ struct PMODRL {
 	u32 transfer_start_deliverd;
 	u32 transfer_start_lost;
 
-	u8 reset_ltbw_flag;
-
 	char* buffer;
 	u32 store_interval;
 
 	u64 acc_rto_dur;
+
+	u64 min_rtt_us;
 
 	u64	cycle_mstamp;	     /* time of this cycle phase start */
 
@@ -174,7 +176,7 @@ static u64 bbr_rate_bytes_per_sec(struct sock *sk, u64 rate, int gain)
 static unsigned long bbr_bw_to_pacing_rate_pmodrl(struct sock *sk, u32 bw, int gain, int nominator)
 {
 	// struct tcp_sock *tp = tcp_sk(sk);
-	struct bbr *bbr = inet_csk_ca(sk);
+	struct astraea *bbr = inet_csk_ca(sk);
 	u64 rate = bw;
 
 	if(bbr->pmodrl && bbr->pmodrl->classify == 1 && nominator != 0){
@@ -257,7 +259,7 @@ static void estimation_classify(struct sock *sk){
 	}
 
 	if(bbr->pmodrl->high_loss_flag == 0){
-		if(bbr->pmodrl->loss_start_time_us != 0 && bbr->pmodrl->loss_start_time_us + 7 * bbr->min_rtt_us < now_us){
+		if(bbr->pmodrl->loss_start_time_us != 0 && bbr->pmodrl->loss_start_time_us + 7 * bbr->pmodrl->min_rtt_us < now_us){
 			d = cur_delivered - bbr->pmodrl->before_loss_delivered;
 			l = cur_lost - bbr->pmodrl->before_loss_lost;
 			// if(d < 10) {
@@ -356,10 +358,6 @@ static void estimation_classify(struct sock *sk){
 			if(bbr->pmodrl->classify_time_us == 0){
 				bbr->pmodrl->classify_time_us = now_us;
 			}
-			if(bbr->pmodrl->reset_ltbw_flag == 0){
-				bbr_reset_lt_bw_sampling(sk);
-				bbr->pmodrl->reset_ltbw_flag = 1;
-			}
 			
 			if(bbr->pmodrl->R_arr[best_index] != bbr->pmodrl->mem_R || bbr->pmodrl->B_arr[best_index] != bbr->pmodrl->mem_B) {
 				bbr->pmodrl->classify_time_us = now_us;
@@ -368,7 +366,7 @@ static void estimation_classify(struct sock *sk){
 
 			}
 			else{
-				if(now_us - bbr->pmodrl->classify_time_us > 10 * bbr->min_rtt_us){
+				if(now_us - bbr->pmodrl->classify_time_us > 10 * bbr->pmodrl->min_rtt_us){
 					bbr->pmodrl->classify = 1;
 					bbr->pmodrl->upper_bound = 1;
 					bbr->pmodrl->detected_time = now_us - bbr->pmodrl->bbr_start_us;
@@ -421,9 +419,6 @@ static void probe_pmodrl(struct sock *sk) {
 						bbr->pmodrl->mem_R = bbr->pmodrl->R_arr[bbr->pmodrl->best_index];
 						bbr->pmodrl->round_count = 0;
 						bbr->pmodrl->round_count_no = 0;
-						bbr_advance_cycle_phase(sk);
-						bbr->cycle_idx = 0;
-						bbr->mode = BBR_PROBE_BW;
 					}
 				}
 			}
@@ -480,6 +475,8 @@ static void astraea_cong_control(struct sock* sk,
                                  const struct rate_sample* rs) {
   struct tcp_sock* tp = tcp_sk(sk);
   struct astraea* bbr = inet_csk_ca(sk);
+  u32 now_us = jiffies_to_usecs(tcp_jiffies32);
+  struct inet_sock *inet = inet_sk(sk);
   // print rate sample
   u64 bw;
 
@@ -497,6 +494,13 @@ static void astraea_cong_control(struct sock* sk,
     // deliverd is num of packers, we translate it to bytes, bw in bytes per
     // second
     bw = bw * tp->mss_cache * USEC_PER_SEC >> THR_SCALE;
+  }
+
+  if(bbr->pmodrl){
+  	if(bbr->pmodrl->min_rtt_us == 0){
+  		bbr->pmodrl->min_rtt_us = rs->rtt_us;
+  	}
+  	bbr->pmodrl->min_rtt_us = min((u32)bbr->pmodrl->min_rtt_us, rs->rtt_us);
   }
 
 	if(bbr->pmodrl){
@@ -525,10 +529,6 @@ static void astraea_cong_control(struct sock* sk,
 			}
 		}
 		bbr->pmodrl->lastest_ack_loss = tp->lost;
-
-		if(bbr->pmodrl->classify == 1 && optimize_flag) {
-			bbr_reset_lt_bw_sampling(sk);
-		}
 
 		if(tp->write_seq - tp->snd_nxt < tp->mss_cache && sk_wmem_alloc_get(sk) < SKB_TRUESIZE(1) && tcp_packets_in_flight(tp) < tp->snd_cwnd && tp->lost_out <= tp->retrans_out){
 			bbr->pmodrl->probe_rtt_flag = 0;
@@ -566,10 +566,10 @@ static void astraea_cong_control(struct sock* sk,
 			reset_pmodrl(sk, (u8)9, (u8)10);
 		}
 		if(enable_printk){
-			printk(KERN_INFO "!!!ACK: ip:%pI4 port:%hu c:%u B:%llu R:%llu mode:%u idx:%u n:%u u_p:%lu r_p:%lu b:%llu d:%u l:%u rd:%u rl:%u u:%u rc:%u rcn:%u cl:%u def:%u srtt:%llu state:%u cwnd:%u adv:%u inflight:%u s:%llu", 
+			printk(KERN_INFO "!!!ACK: ip:%pI4 port:%hu c:%u B:%llu R:%llu n:%u u_p:%lu r_p:%lu b:%llu d:%u l:%u rd:%u rl:%u u:%u rc:%u rcn:%u cl:%u def:%u cwnd:%u adv:%u inflight:%u s:%llu", 
 				&sk->sk_daddr, ntohs(inet->inet_dport), bbr->pmodrl->classify, bbr->pmodrl->B_arr[bbr->pmodrl->best_index], bbr->pmodrl->R_arr[bbr->pmodrl->best_index], 
-				bbr->mode, bbr->cycle_idx, bbr->pmodrl->nominator, bbr_bw_to_pacing_rate_pmodrl(sk,bbr->pmodrl->R_arr[bbr->pmodrl->best_index],BBR_UNIT,bbr->pmodrl->nominator), sk->sk_pacing_rate, tp->bytes_acked, tp->delivered, tp->lost, 
-				rs->delivered, rs->losses ,bbr->pmodrl->upper_bound, bbr->pmodrl->round_count, bbr->pmodrl->round_count_no, tcp_is_cwnd_limited(sk), bbr->pmodrl->dis_enable_flag, srtt, inet_csk(sk)->icsk_ca_state, tp->snd_cwnd, tp->rcv_wnd,tcp_packets_in_flight(tp),
+				bbr->pmodrl->nominator, bbr_bw_to_pacing_rate_pmodrl(sk,bbr->pmodrl->R_arr[bbr->pmodrl->best_index],BBR_UNIT,bbr->pmodrl->nominator), sk->sk_pacing_rate, tp->bytes_acked, tp->delivered, tp->lost, 
+				rs->delivered, rs->losses ,bbr->pmodrl->upper_bound, bbr->pmodrl->round_count, bbr->pmodrl->round_count_no, tcp_is_cwnd_limited(sk), bbr->pmodrl->dis_enable_flag, tp->snd_cwnd, tp->rcv_wnd,tcp_packets_in_flight(tp),
 				tp->bytes_sent);	
 		}	
 	}
@@ -605,6 +605,8 @@ static void astraea_pkts_acked(struct sock* sk, const struct ack_sample* acks) {
 static void astraea_ack_event(struct sock* sk, u32 flags) {}
 
 static void astraea_cwnd_event(struct sock* sk, enum tcp_ca_event event) {
+	struct tcp_sock* tp = tcp_sk(sk);
+  u32 now_us = jiffies_to_usecs(tcp_jiffies32);
   if (event == CA_EVENT_LOSS) {
     printk(KERN_INFO "%s packet loss: cwnd: %u, current_state: %u", prefix,
            tcp_sk(sk)->snd_cwnd, inet_csk(sk)->icsk_ca_state);
