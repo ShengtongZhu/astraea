@@ -4,6 +4,8 @@ import sys
 import time
 import csv
 from datetime import datetime
+import socket
+import json
 
 def run_client(server_ip="127.0.0.1", port=8888, size_bytes=1024*1024, cc_algo="cubic", perf_log=None):
     """Run the nocomm client receiver with specified parameters"""
@@ -72,11 +74,57 @@ def log_request_data(log_file, start_time, server_cc_algo, client_cc_algo, reque
             'throughput_kbps': f"{throughput_kbps:.2f}" if throughput_kbps is not None else ''
         })
 
+# top-level function: send_request_to_server / wait_for_completion
+def send_request_to_server(server_ip, coord_port, cc_algo, request_size):
+    """Send request with CC and size to coordination server"""
+    try:
+        coord_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        coord_sock.connect((server_ip, coord_port))
+
+        request = {
+            'cc_algo': cc_algo,
+            'request_size': request_size
+        }
+        coord_sock.send(json.dumps(request).encode('utf-8'))
+
+        response_data = coord_sock.recv(1024).decode('utf-8')
+        response = json.loads(response_data)
+
+        if response.get('status') != 'ready':
+            raise Exception(f"Server not ready: {response}")
+
+        print("Server is ready for data connection")
+        return coord_sock
+
+    except Exception as e:
+        print(f"Error coordinating with server: {e}")
+        try:
+            coord_sock.close()
+        except Exception:
+            pass
+        return None
+
+def wait_for_completion(coord_sock):
+    """Wait for server completion notification"""
+    try:
+        response_data = coord_sock.recv(1024).decode('utf-8')
+        response = json.loads(response_data)
+        coord_sock.close()
+        return response.get('status') == 'completed'
+    except Exception as e:
+        print(f"Error waiting for completion: {e}")
+        try:
+            coord_sock.close()
+        except Exception:
+            pass
+        return False
+
 if __name__ == "__main__":
     # Config
     cc_arr = ["astraea"]  # Server-side CC sequence to mirror
     size_cycle_kb = [32 * 1024, 16 * 1024, 8 * 1024, 4 * 1024, 2 * 1024, 1 * 1024, 512]  # KB
     server_ip = "127.0.0.1"  # Change if needed
+    coord_port = 8889        # Coordination port
     data_port = 8888         # Data transfer port
     client_cc = "cubic"      # Client-side CC algorithm
 
@@ -93,6 +141,7 @@ if __name__ == "__main__":
     print("Starting client cycle (nocomm)")
     print(f"CC algorithms (server-side expected): {cc_arr}")
     print(f"Request sizes: {size_cycle_kb} KB")
+    print(f"Server coordination: {server_ip}:{coord_port}")
     print(f"Data connection: {server_ip}:{data_port}")
     print(f"Logging requests to: {log_filename}")
     print("Press Ctrl+C to stop\n")
@@ -114,6 +163,12 @@ if __name__ == "__main__":
 
                     print(f"\n--- Request {request_count}: server_cc={server_cc} + size={size_kb} KB ---")
 
+                    # Coordinate with server: send cc+size, wait for 'ready'
+                    coord_sock = send_request_to_server(server_ip, coord_port, server_cc, size_bytes)
+                    if not coord_sock:
+                        print(f"Failed to coordinate request {request_count}, skipping...")
+                        continue
+
                     # Give the server time to start listening for this request
                     time.sleep(5)
                     request_start_time = datetime.now().strftime("%m-%d-%H-%M-%S")
@@ -126,9 +181,13 @@ if __name__ == "__main__":
                         perf_log=f"{server_cc}_{size_bytes}_{request_count}_{request_start_time}_client.log"
                     )
 
+                    # Wait for server completion notification
+                    completion_success = wait_for_completion(coord_sock)
+                    if not completion_success:
+                        print("Warning: Server completion notification failed")
+
                     throughput_kbps = None
                     if success:
-                        # Convert to Kbps
                         throughput_kbps = (size_kb * 8) / duration if duration > 0 else 0.0
                         print(f"Throughput: {throughput_kbps:.2f} Kbps")
                     else:

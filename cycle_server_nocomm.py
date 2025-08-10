@@ -5,6 +5,8 @@ import signal
 import sys
 import os
 from datetime import datetime
+import socket
+import json
 
 class CycleServerNocommManager:
     def __init__(self):
@@ -13,6 +15,9 @@ class CycleServerNocommManager:
         self.experiment_start_time = None
         self.request_count = 0
         self.data_port = 8888   # Data transfer port
+        self.coord_socket = None
+        self.coord_server_socket = None
+        self.coord_port = 8889  # Coordination port
 
     def start_tcpdump(self, interface="eno1", output_file="network_trace.pcap"):
         """Start tcpdump to capture network traffic"""
@@ -164,6 +169,62 @@ class CycleServerNocommManager:
             self.server_process.wait()
             self.server_process = None
 
+    def start_coordination_server(self):
+        """Start coordination server to receive client requests"""
+        self.coord_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.coord_server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.coord_server_socket.bind(('', self.coord_port))
+        self.coord_server_socket.listen(1)
+        print(f"Coordination server listening on port {self.coord_port}")
+
+    def wait_for_client_request(self):
+        """Wait for client request with CC and size info"""
+        try:
+            print("Waiting for client request...")
+            self.coord_socket, addr = self.coord_server_socket.accept()
+            print(f"Client connected from {addr}")
+
+            data = self.coord_socket.recv(1024).decode('utf-8')
+            request = json.loads(data)
+
+            cc_algo = request['cc_algo']
+            request_size = request['request_size']
+
+            print(f"Received request: CC={cc_algo}, Size={request_size} bytes")
+
+            # Send acknowledgment
+            response = {'status': 'ready'}
+            self.coord_socket.send(json.dumps(response).encode('utf-8'))
+
+            return cc_algo, request_size
+        except Exception as e:
+            print(f"Error receiving client request: {e}")
+            return None, None
+
+    def notify_client_completion(self):
+        """Notify client that request is completed"""
+        try:
+            if self.coord_socket:
+                response = {'status': 'completed'}
+                self.coord_socket.send(json.dumps(response).encode('utf-8'))
+                self.coord_socket.close()
+                self.coord_socket = None
+        except Exception as e:
+            print(f"Error notifying client: {e}")
+
+    def stop_coordination_server(self):
+        """Stop coordination server"""
+        if self.coord_server_socket:
+            self.coord_server_socket.close()
+            self.coord_server_socket = None
+
+    def wait_for_server_exit(self):
+        """Wait for server to exit (indicating request completed)"""
+        if self.server_process:
+            print("Waiting for server to complete request...")
+            self.server_process.wait()
+            self.server_process = None
+
     def handle_single_request(self, cc_algo, request_size, interface="eno1"):
         """Handle a single request with tcpdump capture and dmesg logs"""
         self.request_count += 1
@@ -208,39 +269,73 @@ class CycleServerNocommManager:
         return True
 
     def run_cycle_experiment(self, interface="eno1"):
-        """Cycle through CC algos and sizes without coordination channel"""
-        cc_arr = ["astraea"]  # Server-side CC algos to test
-        size_cycle_kb = [32 * 1024, 16 * 1024, 8 * 1024, 4 * 1024, 2 * 1024, 1 * 1024, 512]  # sizes in KB
-
-        print("Starting server cycle (nocomm)")
-        print(f"CC algorithms: {cc_arr}")
-        print(f"Request sizes: {size_cycle_kb} KB")
+        """Handle incoming coordinated requests and run them (nocomm data path)"""
+        print("Starting server cycle (nocomm with coordination)")
+        print(f"Coordination port: {self.coord_port}")
         print(f"Data connection (listening) on port: {self.data_port}")
         print("Press Ctrl+C to stop\n")
 
+        self.start_coordination_server()
         cycle_count = 0
+
         try:
             while True:
                 cycle_count += 1
                 print(f"\n=== Cycle {cycle_count} ===")
 
-                for cc_algo in cc_arr:
-                    print(f"\n--- Testing CC Algorithm: {cc_algo} ---")
-                    for size_kb in size_cycle_kb:
-                        size_bytes = size_kb * 1024
-                        print(f"\n--- Request: {cc_algo} + {size_kb} KB ---")
-                        success = self.handle_single_request(cc_algo=cc_algo, request_size=size_bytes, interface=interface)
-                        if not success:
-                            print("Request failed, continuing to next...")
-                        print("Waiting 10 seconds before next request...")
-                        time.sleep(10)
+                # Wait for the client to specify CC and request size
+                cc_algo, request_size = self.wait_for_client_request()
+                if cc_algo is None or request_size is None:
+                    print("Invalid request, continuing...")
+                    continue
 
-                print(f"Completed cycle {cycle_count} with all CC algorithms")
-                time.sleep(2)  # Delay between cycles
+                success = self.handle_single_request(cc_algo=cc_algo, request_size=request_size, interface=interface)
+                if not success:
+                    print("Request failed, continuing to next...")
+
+                # Step: Notify client that server completed the request
+                self.notify_client_completion()
+
+                print("Waiting 10 seconds before next request...")
+                time.sleep(10)
 
         except KeyboardInterrupt:
-            print(f"\nStopped after {cycle_count} cycles, {self.request_count} total requests")
+            print("\nReceived interrupt, exiting...")
             sys.exit(0)
+        finally:
+            self.stop_coordination_server()
+    cc_arr = ["astraea"]  # Server-side CC algos to test
+    size_cycle_kb = [32 * 1024, 16 * 1024, 8 * 1024, 4 * 1024, 2 * 1024, 1 * 1024, 512]  # sizes in KB
+
+    print("Starting server cycle (nocomm)")
+    print(f"CC algorithms: {cc_arr}")
+    print(f"Request sizes: {size_cycle_kb} KB")
+    print(f"Data connection (listening) on port: {self.data_port}")
+    print("Press Ctrl+C to stop\n")
+
+    cycle_count = 0
+    try:
+        while True:
+            cycle_count += 1
+            print(f"\n=== Cycle {cycle_count} ===")
+
+            for cc_algo in cc_arr:
+                print(f"\n--- Testing CC Algorithm: {cc_algo} ---")
+                for size_kb in size_cycle_kb:
+                    size_bytes = size_kb * 1024
+                    print(f"\n--- Request: {cc_algo} + {size_kb} KB ---")
+                    success = self.handle_single_request(cc_algo=cc_algo, request_size=size_bytes, interface=interface)
+                    if not success:
+                        print("Request failed, continuing to next...")
+                    print("Waiting 10 seconds before next request...")
+                    time.sleep(10)
+
+            print(f"Completed cycle {cycle_count} with all CC algorithms")
+            time.sleep(2)  # Delay between cycles
+
+    except KeyboardInterrupt:
+        print(f"\nStopped after {cycle_count} cycles, {self.request_count} total requests")
+        sys.exit(0)
 
 def signal_handler(sig, frame):
     print("\nReceived interrupt, exiting...")
