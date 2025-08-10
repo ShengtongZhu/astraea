@@ -83,61 +83,68 @@ class CycleServerManager:
         ]
         
         print(f"Starting tcpdump: {abs_output_file}")
-        self.tcpdump_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Start in a new process group so we can signal the whole group
+        self.tcpdump_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=os.setsid
+        )
         time.sleep(1)  # Give tcpdump time to start
         return self.tcpdump_process
     
     def stop_tcpdump(self):
-        """Stop tcpdump forcefully using sudo kill for all tcpdump PIDs"""
-        try:
-            # Collect tcpdump PIDs via pgrep
-            res = subprocess.run(
-                ["pgrep", "-x", "tcpdump"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            pids = []
-            if res.returncode == 0:
-                pids = [int(x) for x in res.stdout.strip().splitlines() if x.strip().isdigit()]
-            
-            # Include known subprocess PID if still alive
-            if self.tcpdump_process and self.tcpdump_process.poll() is None:
-                pids.append(self.tcpdump_process.pid)
-            
-            # Deduplicate
-            pids = list({pid for pid in pids})
-            
-            if pids:
-                print(f"Killing tcpdump PIDs (TERM): {pids}")
-                for pid in pids:
-                    subprocess.run(["sudo", "kill", "-TERM", str(pid)],
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
-                # Brief wait before checking survivors
-                time.sleep(0.1)
-                
-                # Re-check survivors
-                res2 = subprocess.run(
-                    ["pgrep", "-x", "tcpdump"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                survivors = []
-                if res2.returncode == 0:
-                    survivors = [int(x) for x in res2.stdout.strip().splitlines() if x.strip().isdigit()]
-                
-                if survivors:
-                    print(f"Force killing tcpdump PIDs (KILL): {survivors}")
-                    for pid in survivors:
-                        subprocess.run(["sudo", "kill", "-KILL", str(pid)],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        """Forcefully stop ALL tcpdump processes with escalating signals and verification."""
+        def run_cmd(base_cmd):
+            if os.geteuid() == 0:
+                return subprocess.run(base_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
-                print("No tcpdump process found.")
-        except Exception as e:
-            print(f"Warning: failed to kill tcpdump via sudo kill: {e}")
-        finally:
+                return subprocess.run(["sudo"] + base_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def pgrep_tcpdump():
+            res = subprocess.run(["pgrep", "-x", "tcpdump"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if res.returncode != 0 or not res.stdout.strip():
+                return []
+            return [int(x) for x in res.stdout.strip().splitlines() if x.strip().isdigit()]
+
+        print("Stopping tcpdump (force)...")
+
+        # Try escalating signals with retries
+        for sig_flag in ["-INT", "-TERM", "-KILL"]:
+            pids = pgrep_tcpdump()
+            if not pids:
+                break
+            print(f"Sending {sig_flag} to tcpdump PIDs: {pids}")
+            # Kill by name (all tcpdump)
+            run_cmd(["pkill", sig_flag, "-x", "tcpdump"])
+
+            # Also try signaling our own process group (if still running)
+            try:
+                if self.tcpdump_process and self.tcpdump_process.poll() is None:
+                    pgid = os.getpgid(self.tcpdump_process.pid)
+                    sig_map = {"-INT": signal.SIGINT, "-TERM": signal.SIGTERM, "-KILL": signal.SIGKILL}
+                    os.killpg(pgid, sig_map[sig_flag])
+            except Exception:
+                pass
+
+            # Wait up to 2 seconds for processes to die
+            for _ in range(10):
+                time.sleep(0.2)
+                if not pgrep_tcpdump():
+                    break
+
+        survivors = pgrep_tcpdump()
+        if survivors:
+            print(f"Warning: tcpdump survivors after KILL: {survivors}")
+        else:
+            print("All tcpdump processes stopped.")
+
+        # Clean local handle
+        if self.tcpdump_process:
+            try:
+                self.tcpdump_process.wait(timeout=0.5)
+            except Exception:
+                pass
             self.tcpdump_process = None
     
     def clear_dmesg(self):
