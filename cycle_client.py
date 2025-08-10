@@ -165,7 +165,7 @@ if __name__ == "__main__":
                     # Step 3: Run data client
                     success, duration, start_time = run_client(
                         server_ip=server_ip,
-                        data_port=data_port,
+                        port=data_port,
                         size_bytes=size_bytes,
                         cc_algo=client_cc,
                         perf_log=f"{cc_algo}_{size_bytes}_{request_count}_{request_start_time}_client.log"
