@@ -266,7 +266,7 @@ int main(int argc, char** argv) {
   }
 
   std::chrono::milliseconds control_interval(20ms);
-  if (cong_ctl == "astraea" and not(pyhelper.empty() or model.empty())) {
+  if ((cong_ctl == "astraea" or cong_ctl == "rtcp_astraea") and not(pyhelper.empty() or model.empty())) {
     if (not fs::exists(pyhelper)) {
       throw runtime_error("Pyhelper does not exist");
     }
@@ -335,7 +335,7 @@ int main(int argc, char** argv) {
   client.set_nodelay();
   LOG(DEBUG) << "Server " << global_flow_id << " set congestion control to " << cong_ctl;
 
-  if (cong_ctl == "astraea") {
+  if (cong_ctl == "astraea" or cong_ctl == "rtcp_astraea") {
     int enable_deepcc = 2;
     client.enable_deepcc(enable_deepcc);
     LOG(DEBUG) << "Server " << global_flow_id << " enables deepCC plugin: " << enable_deepcc;
@@ -367,7 +367,7 @@ int main(int argc, char** argv) {
   if (use_RL and ipc != nullptr) {
     ct = std::move(thread(control_thread, std::ref(client), std::ref(ipc), control_interval));
     LOG(DEBUG) << "Server " << global_flow_id << " Started control thread ... ";
-  } else if (cong_ctl != "astraea" and perf_log != nullptr) {
+  } else if (cong_ctl != "astraea" and cong_ctl != "rtcp_astraea" and perf_log != nullptr) {
     LOG(INFO) << "Launch monitor thread for " << cong_ctl << " ...";
     ct = thread(do_monitor, std::ref(client));
   }
