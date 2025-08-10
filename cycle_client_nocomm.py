@@ -154,10 +154,9 @@ if __name__ == "__main__":
             cycle_count += 1
             print(f"\n=== Cycle {cycle_count} ===")
 
-            for server_cc in cc_arr:
-                print(f"\n--- Expecting Server CC Algorithm: {server_cc} ---")
+            for size_kb in size_cycle_kb:
 
-                for size_kb in size_cycle_kb:
+                for server_cc in cc_arr:
                     request_count += 1
                     size_bytes = size_kb * 1024
 
