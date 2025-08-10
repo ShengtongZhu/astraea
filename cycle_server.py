@@ -88,16 +88,56 @@ class CycleServerManager:
         return self.tcpdump_process
     
     def stop_tcpdump(self):
-        """Stop tcpdump process"""
-        if self.tcpdump_process:
-            print("Stopping tcpdump...")
-            self.tcpdump_process.terminate()
-            try:
-                self.tcpdump_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                print("Force killing tcpdump...")
-                self.tcpdump_process.kill()
-                self.tcpdump_process.wait()
+        """Stop tcpdump forcefully using sudo kill for all tcpdump PIDs"""
+        try:
+            # Collect tcpdump PIDs via pgrep
+            res = subprocess.run(
+                ["pgrep", "-x", "tcpdump"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            pids = []
+            if res.returncode == 0:
+                pids = [int(x) for x in res.stdout.strip().splitlines() if x.strip().isdigit()]
+            
+            # Include known subprocess PID if still alive
+            if self.tcpdump_process and self.tcpdump_process.poll() is None:
+                pids.append(self.tcpdump_process.pid)
+            
+            # Deduplicate
+            pids = list({pid for pid in pids})
+            
+            if pids:
+                print(f"Killing tcpdump PIDs (TERM): {pids}")
+                for pid in pids:
+                    subprocess.run(["sudo", "kill", "-TERM", str(pid)],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # Brief wait before checking survivors
+                time.sleep(0.1)
+                
+                # Re-check survivors
+                res2 = subprocess.run(
+                    ["pgrep", "-x", "tcpdump"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                survivors = []
+                if res2.returncode == 0:
+                    survivors = [int(x) for x in res2.stdout.strip().splitlines() if x.strip().isdigit()]
+                
+                if survivors:
+                    print(f"Force killing tcpdump PIDs (KILL): {survivors}")
+                    for pid in survivors:
+                        subprocess.run(["sudo", "kill", "-KILL", str(pid)],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                print("No tcpdump process found.")
+        except Exception as e:
+            print(f"Warning: failed to kill tcpdump via sudo kill: {e}")
+        finally:
             self.tcpdump_process = None
     
     def clear_dmesg(self):
