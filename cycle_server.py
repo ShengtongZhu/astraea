@@ -162,7 +162,7 @@ class CycleServerManager:
         
         tcpdump_file = f"{cc_algo}_{request_size}_{request_start_time}.pcap"
         dmesg_file = f"{cc_algo}_{request_size}_{request_start_time}_dmesg.txt"
-        server_perf_log = f"{cc_algo}_{request_size}_{request_count}_{request_start_time}_server.log"
+        server_perf_log = f"{cc_algo}_{request_size}_{self.request_count}_{request_start_time}_server.log"
         
         try:
             print(f"\n=== Request {self.request_count} - {request_start_time} ===")
