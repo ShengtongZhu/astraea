@@ -155,8 +155,8 @@ static void astraea_update_pacing_rate(struct sock* sk) {
 
 void astraea_update_cwnd(struct sock* sk) {
   struct tcp_sock* tp = tcp_sk(sk);
-  tp->snd_cwnd = max(tp->snd_cwnd, tp->cwnd_min);
-  tp->snd_cwnd = min(tp->snd_cwnd, tp->snd_cwnd_clamp);
+//   tp->snd_cwnd = max(tp->snd_cwnd, tp->cwnd_min);
+//   tp->snd_cwnd = min(tp->snd_cwnd, tp->snd_cwnd_clamp);
   if (tp->deepcc_enable > 1) astraea_update_pacing_rate(sk);
 }
 
@@ -482,20 +482,20 @@ static void astraea_cong_control(struct sock* sk,
   u64 srtt = tp->srtt_us >> 3;
 
   // we believe cwnd has been modified by user-space RL-agent
-  u32 cwnd = max(tp->prior_cwnd, bbr->prior_cwnd);
-  tp->snd_cwnd = max(tp->snd_cwnd, cwnd);
+//   u32 cwnd = max(tp->prior_cwnd, bbr->prior_cwnd);
+//   tp->snd_cwnd = max(tp->snd_cwnd, cwnd);
   astraea_update_cwnd(sk);
 
-  if (rs->delivered < 0 || rs->interval_us <= 0) {
-    bw = 0;
-  } else {
-    // we first need to enlarge bw thus avoiding get zero
-    bw = (u64)rs->delivered * THR_UNIT;
-    do_div(bw, rs->interval_us);
-    // deliverd is num of packers, we translate it to bytes, bw in bytes per
-    // second
-    bw = bw * tp->mss_cache * USEC_PER_SEC >> THR_SCALE;
-  }
+//   if (rs->delivered < 0 || rs->interval_us <= 0) {
+//     bw = 0;
+//   } else {
+//     // we first need to enlarge bw thus avoiding get zero
+//     bw = (u64)rs->delivered * THR_UNIT;
+//     do_div(bw, rs->interval_us);
+//     // deliverd is num of packers, we translate it to bytes, bw in bytes per
+//     // second
+//     bw = bw * tp->mss_cache * USEC_PER_SEC >> THR_SCALE;
+//   }
 
   if(bbr->pmodrl){
   	if(bbr->pmodrl->min_rtt_us == 0){
